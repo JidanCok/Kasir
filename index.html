@@ -328,6 +328,11 @@ function KasirApp() {
 
   const [saveError, setSaveError] = useState(false);
 
+  // pengaturan toko
+  const [storeSettings, setStoreSettings] = useState({ name: '', logo: null });
+  const [showSettings, setShowSettings] = useState(false);
+  const [settingsForm, setSettingsForm] = useState({ name: '', logo: null });
+
   // ---- load data ----
   useEffect(() => {
     (async () => {
@@ -341,8 +346,15 @@ function KasirApp() {
         const t = await window.storage.get('transactions');
         if (t && t.value) loadedTransactions = JSON.parse(t.value);
       } catch (e) { /* none yet */ }
+      let loadedSettings = { name: '', logo: null };
+      try {
+        const s = await window.storage.get('store-settings');
+        if (s && s.value) loadedSettings = JSON.parse(s.value);
+      } catch (e) { /* none yet */ }
       setProducts(loadedProducts);
       setTransactions(loadedTransactions);
+      setStoreSettings(loadedSettings);
+      setSettingsForm(loadedSettings);
       setReady(true);
       // persist seed if this was a first run
       try {
@@ -358,6 +370,27 @@ function KasirApp() {
       const res = await window.storage.set('products', JSON.stringify(next));
       if (!res) setSaveError(true);
     } catch (e) { setSaveError(true); }
+  };
+
+  const saveStoreSettings = async (next) => {
+    setStoreSettings(next);
+    try {
+      const res = await window.storage.set('store-settings', JSON.stringify(next));
+      if (!res) setSaveError(true);
+    } catch (e) { setSaveError(true); }
+  };
+
+  const handleLogoUpload = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setSettingsForm(f => ({ ...f, logo: reader.result }));
+    reader.readAsDataURL(file);
+  };
+
+  const submitSettings = async () => {
+    await saveStoreSettings(settingsForm);
+    setShowSettings(false);
   };
 
   const saveTransactions = async (next) => {
@@ -495,6 +528,100 @@ function KasirApp() {
     window.print();
   };
 
+  const generateReceiptImage = (trx, settings) => new Promise((resolve) => {
+    const width = 380;
+    const padding = 24;
+    const estHeight = padding * 2 + 150 + trx.items.length * 34 + 160 + (settings.logo ? 70 : 0);
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = estHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, estHeight);
+    ctx.fillStyle = '#20261F';
+
+    const dashedLine = (y) => {
+      ctx.strokeStyle = '#D6CFBE';
+      ctx.beginPath(); ctx.setLineDash([3, 3]);
+      ctx.moveTo(padding, y); ctx.lineTo(width - padding, y); ctx.stroke();
+      ctx.setLineDash([]);
+    };
+
+    const drawBody = (startY) => {
+      let y = startY;
+      ctx.textAlign = 'center';
+      ctx.font = '700 18px monospace';
+      ctx.fillStyle = '#20261F';
+      ctx.fillText(settings.name || 'Toko Saya', width / 2, y);
+      y += 20;
+      ctx.font = '12px monospace';
+      ctx.fillStyle = '#6B7268';
+      ctx.fillText(formatDateTime(trx.timestamp), width / 2, y);
+      y += 16;
+      ctx.fillText('No. #' + trx.id, width / 2, y);
+      y += 14;
+      dashedLine(y);
+      y += 20;
+      trx.items.forEach(it => {
+        ctx.textAlign = 'left'; ctx.font = '13px monospace'; ctx.fillStyle = '#20261F';
+        ctx.fillText(it.name, padding, y);
+        ctx.textAlign = 'right';
+        ctx.fillText(formatRupiah(it.price * it.qty), width - padding, y);
+        y += 15;
+        ctx.textAlign = 'left'; ctx.font = '11px monospace'; ctx.fillStyle = '#6B7268';
+        ctx.fillText(`${it.qty} x ${formatRupiah(it.price)}`, padding, y);
+        y += 19;
+      });
+      dashedLine(y);
+      y += 22;
+      ctx.textAlign = 'left'; ctx.font = '700 14px monospace'; ctx.fillStyle = '#20261F';
+      ctx.fillText('Total', padding, y);
+      ctx.textAlign = 'right';
+      ctx.fillText(formatRupiah(trx.total), width - padding, y);
+      y += 20;
+      ctx.font = '12px monospace'; ctx.fillStyle = '#6B7268';
+      ctx.textAlign = 'left'; ctx.fillText('Tunai', padding, y);
+      ctx.textAlign = 'right'; ctx.fillText(formatRupiah(trx.cash), width - padding, y);
+      y += 16;
+      ctx.textAlign = 'left'; ctx.fillText('Kembali', padding, y);
+      ctx.textAlign = 'right'; ctx.fillText(formatRupiah(trx.change), width - padding, y);
+      y += 26;
+      ctx.textAlign = 'center'; ctx.font = '11px monospace';
+      ctx.fillText('Terima kasih atas kunjungan Anda', width / 2, y);
+      resolve(canvas.toDataURL('image/png'));
+    };
+
+    if (settings.logo) {
+      const img = new Image();
+      img.onload = () => {
+        const s = 56;
+        ctx.drawImage(img, width / 2 - s / 2, padding, s, s);
+        drawBody(padding + s + 22);
+      };
+      img.onerror = () => drawBody(padding + 10);
+      img.src = settings.logo;
+    } else {
+      drawBody(padding + 10);
+    }
+  });
+
+  const shareOrSaveReceipt = async () => {
+    if (!lastTransaction) return;
+    const dataUrl = await generateReceiptImage(lastTransaction, storeSettings);
+    try {
+      const blob = await (await fetch(dataUrl)).blob();
+      const file = new File([blob], `struk-${lastTransaction.id}.png`, { type: 'image/png' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: 'Struk Transaksi' });
+        return;
+      }
+    } catch (e) { /* fall back to download below */ }
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = `struk-${lastTransaction.id}.png`;
+    a.click();
+  };
+
   const formatDateTime = (ts) => {
     const d = new Date(ts);
     return d.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) +
@@ -524,6 +651,9 @@ function KasirApp() {
         </button>
         <button className={`ka-tab ${activeTab === 'riwayat' ? 'active' : ''}`} onClick={() => setActiveTab('riwayat')}>
           <Ico size={19}>🕘</Ico> Riwayat
+        </button>
+        <button className="ka-tab" style={{ marginTop: 'auto' }} onClick={() => { setSettingsForm(storeSettings); setShowSettings(true); }}>
+          <Ico size={19}>⚙️</Ico> Toko
         </button>
       </div>
 
@@ -790,6 +920,35 @@ function KasirApp() {
         </div>
       )}
 
+      {showSettings && (
+        <div className="ka-modal-overlay" onClick={() => setShowSettings(false)}>
+          <div className="ka-modal" onClick={e => e.stopPropagation()}>
+            <h3>
+              Pengaturan Toko
+              <button onClick={() => setShowSettings(false)}><Ico size={18}>✖️</Ico></button>
+            </h3>
+            <div className="ka-field">
+              <label>Nama Toko</label>
+              <input value={settingsForm.name} onChange={e => setSettingsForm({ ...settingsForm, name: e.target.value })} placeholder="Contoh: Toko Kopi Senja" />
+            </div>
+            <div className="ka-field">
+              <label>Logo (muncul di struk)</label>
+              {settingsForm.logo && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                  <img src={settingsForm.logo} alt="logo" style={{ width: 48, height: 48, objectFit: 'contain', borderRadius: 8, border: '1px solid var(--border)' }} />
+                  <button className="ka-btn ghost" onClick={() => setSettingsForm({ ...settingsForm, logo: null })}><Ico size={13}>🗑️</Ico> Hapus logo</button>
+                </div>
+              )}
+              <input type="file" accept="image/*" onChange={handleLogoUpload} />
+            </div>
+            <div className="ka-modal-actions">
+              <button className="ka-btn secondary" onClick={() => setShowSettings(false)}>Batal</button>
+              <button className="ka-btn primary" onClick={submitSettings}>Simpan</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showReceipt && lastTransaction && (
         <div className="ka-modal-overlay" onClick={() => setShowReceipt(false)}>
           <div className="ka-modal" onClick={e => e.stopPropagation()}>
@@ -799,7 +958,8 @@ function KasirApp() {
             </h3>
             <div id="receipt-content">
               <div className="ka-receipt-head">
-                <div className="store">Warung Kasir</div>
+                {storeSettings.logo && <img src={storeSettings.logo} alt="logo" style={{ width: 44, height: 44, objectFit: 'contain', margin: '0 auto 6px' }} />}
+                <div className="store">{storeSettings.name || 'Toko Saya'}</div>
                 <div className="meta">{formatDateTime(lastTransaction.timestamp)}</div>
                 <div className="meta">No. #{lastTransaction.id}</div>
               </div>
@@ -823,9 +983,10 @@ function KasirApp() {
               <div className="ka-receipt-divider" />
               <div style={{ textAlign: 'center', fontSize: 11.5, color: '#6B7268', marginTop: 10 }}>Terima kasih atas kunjungan Anda</div>
             </div>
-            <div className="ka-modal-actions">
+            <div className="ka-modal-actions" style={{ flexWrap: 'wrap' }}>
               <button className="ka-btn secondary" onClick={() => setShowReceipt(false)}>Tutup</button>
-              <button className="ka-btn primary" onClick={printReceipt}><Ico size={15}>🖨️</Ico> Cetak Struk</button>
+              <button className="ka-btn secondary" onClick={shareOrSaveReceipt}><Ico size={15}>📤</Ico> Bagikan/Simpan</button>
+              <button className="ka-btn primary" onClick={printReceipt}><Ico size={15}>🖨️</Ico> Cetak</button>
             </div>
           </div>
         </div>
