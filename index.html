@@ -1,9 +1,68 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import {
-  ShoppingCart, Package, History, Search, Plus, Minus, Trash2,
-  X, Printer, Pencil, Wallet, TrendingUp, Receipt, AlertCircle,
-  Settings, Share2
-} from 'lucide-react';
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Warung Kasir</title>
+<meta name="theme-color" content="#2F6F4E">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Kasir">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
+<style>
+  :root { box-sizing: border-box; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); height: 100%; }
+  html, body { margin: 0; height: 100%; background: #EDEAE1; overscroll-behavior: none; }
+  #root { height: 100%; }
+  @media (max-width: 560px) {
+    .ka-sidebar { width: 64px; padding: 14px 0; }
+    .ka-sidebar-mark { width: 36px; height: 36px; font-size: 12px; margin-bottom: 14px; }
+    .ka-tab { width: 52px; font-size: 10px; padding: 9px 2px; }
+    .ka-topbar { padding: 16px 16px 12px; }
+    .ka-topbar h1 { font-size: 18px; }
+    .ka-topbar p { font-size: 11.5px; }
+    .ka-body { padding: 16px; }
+    .ka-kasir-grid { grid-template-columns: 1fr; }
+    .ka-cart { position: static; max-height: none; }
+    .ka-summary-row { grid-template-columns: 1fr; }
+    .ka-product-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+window.storage = {
+  async get(key, shared) {
+    try {
+      const v = localStorage.getItem('kasir_' + key);
+      return v !== null ? { key, value: v, shared: !!shared } : null;
+    } catch (e) { return null; }
+  },
+  async set(key, value, shared) {
+    try {
+      localStorage.setItem('kasir_' + key, value);
+      return { key, value, shared: !!shared };
+    } catch (e) { return null; }
+  },
+  async delete(key, shared) {
+    try { localStorage.removeItem('kasir_' + key); return { key, deleted: true, shared: !!shared }; }
+    catch (e) { return null; }
+  },
+  async list(prefix, shared) {
+    try {
+      const keys = Object.keys(localStorage).filter(k => k.startsWith('kasir_' + (prefix || ''))).map(k => k.replace('kasir_', ''));
+      return { keys, prefix, shared: !!shared };
+    } catch (e) { return null; }
+  }
+};
+
 
 const STYLE = `
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
@@ -227,6 +286,12 @@ const STYLE = `
 }
 `;
 
+
+const { useState, useEffect, useRef, useMemo } = React;
+function Ico({ size = 16, children }) {
+  return <span style={{ fontSize: size, lineHeight: 1, display: 'inline-flex', verticalAlign: 'middle' }}>{children}</span>;
+}
+
 const formatRupiah = (n) => 'Rp' + Math.round(n || 0).toLocaleString('id-ID');
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
@@ -243,7 +308,7 @@ const SEED_PRODUCTS = [
   { id: uid(), name: 'Roti Gembul', price: 2000, stock: 20, category: 'Add-on' },
 ];
 
-export default function KasirApp() {
+function KasirApp() {
   const [ready, setReady] = useState(false);
   const [products, setProducts] = useState([]);
   const [transactions, setTransactions] = useState([]);
@@ -613,16 +678,16 @@ export default function KasirApp() {
       <div className="ka-sidebar">
         <div className="ka-sidebar-mark">RK</div>
         <button className={`ka-tab ${activeTab === 'kasir' ? 'active' : ''}`} onClick={() => setActiveTab('kasir')}>
-          <ShoppingCart size={19} /> Kasir
+          <Ico size={19}>🛒</Ico> Kasir
         </button>
         <button className={`ka-tab ${activeTab === 'produk' ? 'active' : ''}`} onClick={() => setActiveTab('produk')}>
-          <Package size={19} /> Produk
+          <Ico size={19}>📦</Ico> Produk
         </button>
         <button className={`ka-tab ${activeTab === 'riwayat' ? 'active' : ''}`} onClick={() => setActiveTab('riwayat')}>
-          <History size={19} /> Riwayat
+          <Ico size={19}>🕘</Ico> Riwayat
         </button>
         <button className="ka-tab" style={{ marginTop: 'auto' }} onClick={() => { setSettingsForm(storeSettings); setShowSettings(true); }}>
-          <Settings size={19} /> Toko
+          <Ico size={19}>⚙️</Ico> Toko
         </button>
       </div>
 
@@ -643,7 +708,7 @@ export default function KasirApp() {
         <div className="ka-body">
           {saveError && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#F5E1DD', color: '#A23B2E', padding: '10px 14px', borderRadius: 8, fontSize: 12.5, marginBottom: 16 }}>
-              <AlertCircle size={15} /> Sebagian data mungkin tidak tersimpan. Coba periksa koneksi penyimpanan Anda.
+              <Ico size={15}>⚠️</Ico> Sebagian data mungkin tidak tersimpan. Coba periksa koneksi penyimpanan Anda.
             </div>
           )}
 
@@ -652,7 +717,7 @@ export default function KasirApp() {
               <div>
                 <div className="ka-search-row">
                   <div className="ka-search-box">
-                    <Search size={15} />
+                    <Ico size={15}>🔍</Ico>
                     <input placeholder="Cari produk..." value={search} onChange={e => setSearch(e.target.value)} />
                   </div>
                 </div>
@@ -666,7 +731,7 @@ export default function KasirApp() {
 
                 {filteredProducts.length === 0 ? (
                   <div className="ka-empty-state">
-                    <Package size={34} />
+                    <Ico size={34}>📦</Ico>
                     <p>{products.length === 0 ? 'Belum ada produk. Tambah produk dulu di tab Produk.' : 'Tidak ada produk yang cocok dengan pencarian.'}</p>
                   </div>
                 ) : (
@@ -694,7 +759,7 @@ export default function KasirApp() {
               </div>
 
               <div className="ka-cart">
-                <h2><ShoppingCart size={17} /> Keranjang</h2>
+                <h2><Ico size={17}>🛒</Ico> Keranjang</h2>
                 {cart.length === 0 ? (
                   <div className="empty">Keranjang masih kosong.<br />Pilih produk di sebelah kiri untuk memulai transaksi.</div>
                 ) : (
@@ -707,11 +772,11 @@ export default function KasirApp() {
                             <div className="p">{formatRupiah(c.price)} × {c.qty} = {formatRupiah(c.price * c.qty)}</div>
                           </div>
                           <div className="ka-qty-ctrl">
-                            <button onClick={() => changeQty(c.productId, -1)}><Minus size={12} /></button>
+                            <button onClick={() => changeQty(c.productId, -1)}><Ico size={12}>➖</Ico></button>
                             <span>{c.qty}</span>
-                            <button onClick={() => changeQty(c.productId, 1)} disabled={c.qty >= c.stock}><Plus size={12} /></button>
+                            <button onClick={() => changeQty(c.productId, 1)} disabled={c.qty >= c.stock}><Ico size={12}>➕</Ico></button>
                           </div>
-                          <button className="rm" onClick={() => removeFromCart(c.productId)}><Trash2 size={14} /></button>
+                          <button className="rm" onClick={() => removeFromCart(c.productId)}><Ico size={14}>🗑️</Ico></button>
                         </div>
                       ))}
                     </div>
@@ -745,7 +810,7 @@ export default function KasirApp() {
                         </div>
                       )}
                       <button className="ka-btn primary" disabled={!canCheckout} onClick={checkout}>
-                        <Wallet size={15} /> Selesaikan Transaksi
+                        <Ico size={15}>💰</Ico> Selesaikan Transaksi
                       </button>
                     </div>
                   </>
@@ -759,13 +824,13 @@ export default function KasirApp() {
               <div className="ka-produk-head">
                 <h2>{products.length} produk terdaftar</h2>
                 <button className="ka-btn primary" style={{ width: 'auto' }} onClick={openNewProduct}>
-                  <Plus size={15} /> Tambah Produk
+                  <Ico size={15}>➕</Ico> Tambah Produk
                 </button>
               </div>
 
               {products.length === 0 ? (
                 <div className="ka-empty-state">
-                  <Package size={34} />
+                  <Ico size={34}>📦</Ico>
                   <p>Belum ada produk. Tambah produk pertama Anda.</p>
                 </div>
               ) : (
@@ -789,8 +854,8 @@ export default function KasirApp() {
                           <td>{p.stock}</td>
                           <td>
                             <div className="actions">
-                              <button className="ka-icon-btn" onClick={() => openEditProduct(p)}><Pencil size={14} /></button>
-                              <button className="ka-icon-btn del" onClick={() => deleteProduct(p.id)}><Trash2 size={14} /></button>
+                              <button className="ka-icon-btn" onClick={() => openEditProduct(p)}><Ico size={14}>✏️</Ico></button>
+                              <button className="ka-icon-btn del" onClick={() => deleteProduct(p.id)}><Ico size={14}>🗑️</Ico></button>
                             </div>
                           </td>
                         </tr>
@@ -806,15 +871,15 @@ export default function KasirApp() {
             <div>
               <div className="ka-summary-row">
                 <div className="ka-summary-card">
-                  <div className="label"><TrendingUp size={13} /> Transaksi Hari Ini</div>
+                  <div className="label"><Ico size={13}>📈</Ico> Transaksi Hari Ini</div>
                   <div className="value">{todaysTransactions.length}</div>
                 </div>
                 <div className="ka-summary-card">
-                  <div className="label"><Wallet size={13} /> Pendapatan Hari Ini</div>
+                  <div className="label"><Ico size={13}>💰</Ico> Pendapatan Hari Ini</div>
                   <div className="value rust mono">{formatRupiah(todaysRevenue)}</div>
                 </div>
                 <div className="ka-summary-card">
-                  <div className="label"><Receipt size={13} /> Total Semua Transaksi</div>
+                  <div className="label"><Ico size={13}>🧾</Ico> Total Semua Transaksi</div>
                   <div className="value">{transactions.length}</div>
                 </div>
               </div>
@@ -847,7 +912,7 @@ export default function KasirApp() {
 
               {transactions.length === 0 ? (
                 <div className="ka-empty-state">
-                  <History size={34} />
+                  <Ico size={34}>🕘</Ico>
                   <p>Belum ada transaksi.</p>
                 </div>
               ) : (
@@ -874,7 +939,7 @@ export default function KasirApp() {
                               </div>
                               <div className="ka-trx-actions">
                                 <button className="ka-btn secondary" onClick={(e) => { e.stopPropagation(); setLastTransaction(t); setShowReceipt(true); }}>
-                                  <Printer size={13} /> Cetak Ulang
+                                  <Ico size={13}>🖨️</Ico> Cetak Ulang
                                 </button>
                               </div>
                             </>
@@ -895,7 +960,7 @@ export default function KasirApp() {
           <div className="ka-modal" onClick={e => e.stopPropagation()}>
             <h3>
               {productModal === 'new' ? 'Tambah Produk' : 'Edit Produk'}
-              <button onClick={closeProductModal}><X size={18} /></button>
+              <button onClick={closeProductModal}><Ico size={18}>✖️</Ico></button>
             </h3>
             <div className="ka-field">
               <label>Nama Produk</label>
@@ -928,7 +993,7 @@ export default function KasirApp() {
           <div className="ka-modal" onClick={e => e.stopPropagation()}>
             <h3>
               Pengaturan Toko
-              <button onClick={() => setShowSettings(false)}><X size={18} /></button>
+              <button onClick={() => setShowSettings(false)}><Ico size={18}>✖️</Ico></button>
             </h3>
             <div className="ka-field">
               <label>Nama Toko</label>
@@ -939,7 +1004,7 @@ export default function KasirApp() {
               {settingsForm.logo && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
                   <img src={settingsForm.logo} alt="logo" style={{ width: 48, height: 48, objectFit: 'contain', borderRadius: 8, border: '1px solid var(--border)' }} />
-                  <button className="ka-btn ghost" onClick={() => setSettingsForm({ ...settingsForm, logo: null })}><Trash2 size={13} /> Hapus logo</button>
+                  <button className="ka-btn ghost" onClick={() => setSettingsForm({ ...settingsForm, logo: null })}><Ico size={13}>🗑️</Ico> Hapus logo</button>
                 </div>
               )}
               <input type="file" accept="image/*" onChange={handleLogoUpload} />
@@ -957,7 +1022,7 @@ export default function KasirApp() {
           <div className="ka-modal" onClick={e => e.stopPropagation()}>
             <h3>
               Struk Transaksi
-              <button onClick={() => setShowReceipt(false)}><X size={18} /></button>
+              <button onClick={() => setShowReceipt(false)}><Ico size={18}>✖️</Ico></button>
             </h3>
             <div id="receipt-content">
               <div className="ka-receipt-head">
@@ -988,8 +1053,8 @@ export default function KasirApp() {
             </div>
             <div className="ka-modal-actions" style={{ flexWrap: 'wrap' }}>
               <button className="ka-btn secondary" onClick={() => setShowReceipt(false)}>Tutup</button>
-              <button className="ka-btn secondary" onClick={shareOrSaveReceipt}><Share2 size={15} /> Bagikan/Simpan</button>
-              <button className="ka-btn primary" onClick={printReceipt}><Printer size={15} /> Cetak</button>
+              <button className="ka-btn secondary" onClick={shareOrSaveReceipt}><Ico size={15}>📤</Ico> Bagikan/Simpan</button>
+              <button className="ka-btn primary" onClick={printReceipt}><Ico size={15}>🖨️</Ico> Cetak</button>
             </div>
           </div>
         </div>
@@ -997,3 +1062,17 @@ export default function KasirApp() {
     </div>
   );
 }
+
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<KasirApp />);
+</script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    });
+  }
+</script>
+</body>
+</html>
