@@ -113,6 +113,7 @@ const STYLE = `
   font-weight: 700;
   font-size: 15px;
 }
+.ka-sidebar-divider { width: 36px; height: 1px; background: rgba(255,255,255,0.12); margin: 10px 0; }
 .ka-tab {
   width: 76px;
   display: flex;
@@ -274,7 +275,7 @@ const STYLE = `
 .ka-trx-sub { font-size: 12px; color: var(--ink-soft); margin-top: 4px; }
 .ka-trx-items { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); font-size: 12.5px; display: flex; flex-direction: column; gap: 4px; }
 .ka-trx-items .it { display: flex; justify-content: space-between; color: var(--ink-soft); }
-.ka-trx-actions { margin-top: 10px; display: flex; justify-content: flex-end; }
+.ka-trx-actions { margin-top: 10px; display: flex; justify-content: flex-end; gap: 8px; }
 
 /* --- Receipt --- */
 #receipt-content { font-family: 'IBM Plex Mono', monospace; }
@@ -315,6 +316,18 @@ const SEED_PRODUCTS = [
   { id: uid(), name: 'Roti Gembul', price: 2000, stock: 20, category: 'Add-on' },
 ];
 
+const SEED_EXPENSE_ITEMS = [
+  { id: uid(), name: 'Bubuk Coklat 1KG', unit: 'kg', price: 0 },
+  { id: uid(), name: 'Susu Kental Manis (kaleng)', unit: 'kaleng', price: 0 },
+  { id: uid(), name: 'Susu UHT', unit: 'liter', price: 0 },
+  { id: uid(), name: 'Gelas 14 oz', unit: 'pcs', price: 0 },
+  { id: uid(), name: 'Gelas 16 oz', unit: 'pcs', price: 0 },
+  { id: uid(), name: 'Gas', unit: 'tabung', price: 0 },
+  { id: uid(), name: 'Es Batu', unit: 'kg', price: 0 },
+  { id: uid(), name: 'Listrik', unit: 'bulan', price: 0 },
+  { id: uid(), name: 'Plastik', unit: 'pack', price: 0 },
+];
+
 function KasirApp() {
   const [ready, setReady] = useState(false);
   const [products, setProducts] = useState([]);
@@ -336,6 +349,14 @@ function KasirApp() {
 
   // riwayat state
   const [expandedTrx, setExpandedTrx] = useState(null);
+
+  // modal/pengeluaran state
+  const [expenseItems, setExpenseItems] = useState([]);
+  const [expenseEntries, setExpenseEntries] = useState([]);
+  const [expenseItemModal, setExpenseItemModal] = useState(null); // null | 'new' | item object
+  const [eiForm, setEiForm] = useState({ name: '', unit: '', price: '' });
+  const [showLogExpense, setShowLogExpense] = useState(false);
+  const [logForm, setLogForm] = useState({ itemId: '', qty: '1', unitPrice: '' });
 
   const [saveError, setSaveError] = useState(false);
 
@@ -362,15 +383,31 @@ function KasirApp() {
         const s = await window.storage.get('store-settings');
         if (s && s.value) loadedSettings = JSON.parse(s.value);
       } catch (e) { /* none yet */ }
+      let loadedExpenseItems = SEED_EXPENSE_ITEMS;
+      try {
+        const ei = await window.storage.get('expense-items');
+        if (ei && ei.value) loadedExpenseItems = JSON.parse(ei.value);
+      } catch (e) { /* keep seed */ }
+      let loadedExpenseEntries = [];
+      try {
+        const ee = await window.storage.get('expense-entries');
+        if (ee && ee.value) loadedExpenseEntries = JSON.parse(ee.value);
+      } catch (e) { /* none yet */ }
       setProducts(loadedProducts);
       setTransactions(loadedTransactions);
       setStoreSettings(loadedSettings);
       setSettingsForm(loadedSettings);
+      setExpenseItems(loadedExpenseItems);
+      setExpenseEntries(loadedExpenseEntries);
       setReady(true);
       // persist seed if this was a first run
       try {
         const existing = await window.storage.get('products');
         if (!existing) await window.storage.set('products', JSON.stringify(loadedProducts));
+      } catch (e) { /* ignore */ }
+      try {
+        const existingEi = await window.storage.get('expense-items');
+        if (!existingEi) await window.storage.set('expense-items', JSON.stringify(loadedExpenseItems));
       } catch (e) { /* ignore */ }
     })();
   }, []);
@@ -381,6 +418,63 @@ function KasirApp() {
       const res = await window.storage.set('products', JSON.stringify(next));
       if (!res) setSaveError(true);
     } catch (e) { setSaveError(true); }
+  };
+
+  const saveExpenseItems = async (next) => {
+    setExpenseItems(next);
+    try {
+      const res = await window.storage.set('expense-items', JSON.stringify(next));
+      if (!res) setSaveError(true);
+    } catch (e) { setSaveError(true); }
+  };
+
+  const saveExpenseEntries = async (next) => {
+    setExpenseEntries(next);
+    try {
+      const res = await window.storage.set('expense-entries', JSON.stringify(next));
+      if (!res) setSaveError(true);
+    } catch (e) { setSaveError(true); }
+  };
+
+  const openNewExpenseItem = () => { setEiForm({ name: '', unit: '', price: '' }); setExpenseItemModal('new'); };
+  const openEditExpenseItem = (it) => { setEiForm({ name: it.name, unit: it.unit || '', price: String(it.price) }); setExpenseItemModal(it); };
+
+  const submitExpenseItem = async () => {
+    if (!eiForm.name.trim()) return;
+    const payload = { name: eiForm.name.trim(), unit: eiForm.unit.trim(), price: Math.max(0, parseFloat(eiForm.price) || 0) };
+    if (expenseItemModal === 'new') {
+      await saveExpenseItems([...expenseItems, { id: uid(), ...payload }]);
+    } else {
+      await saveExpenseItems(expenseItems.map(it => it.id === expenseItemModal.id ? { ...it, ...payload } : it));
+    }
+    setExpenseItemModal(null);
+  };
+
+  const deleteExpenseItem = async (id) => {
+    await saveExpenseItems(expenseItems.filter(it => it.id !== id));
+  };
+
+  const openLogExpense = () => {
+    const first = expenseItems[0];
+    setLogForm({ itemId: first ? first.id : '', qty: '1', unitPrice: first ? String(first.price) : '' });
+    setShowLogExpense(true);
+  };
+
+  const submitLogExpense = async () => {
+    const item = expenseItems.find(it => it.id === logForm.itemId);
+    if (!item) return;
+    const qty = Math.max(0, parseFloat(logForm.qty) || 0);
+    const unitPrice = Math.max(0, parseFloat(logForm.unitPrice) || 0);
+    if (qty <= 0) return;
+    const entry = { id: uid().toUpperCase(), timestamp: Date.now(), itemId: item.id, itemName: item.name, unit: item.unit, qty, unitPrice, total: qty * unitPrice };
+    await saveExpenseEntries([entry, ...expenseEntries]);
+    // perbarui harga terakhir di katalog biar kepake lagi di pencatatan berikutnya
+    await saveExpenseItems(expenseItems.map(it => it.id === item.id ? { ...it, price: unitPrice } : it));
+    setShowLogExpense(false);
+  };
+
+  const deleteExpenseEntry = async (id) => {
+    await saveExpenseEntries(expenseEntries.filter(e => e.id !== id));
   };
 
   const saveStoreSettings = async (next) => {
@@ -410,6 +504,19 @@ function KasirApp() {
       const res = await window.storage.set('transactions', JSON.stringify(next));
       if (!res) setSaveError(true);
     } catch (e) { setSaveError(true); }
+  };
+
+  const deleteTransaction = async (trx) => {
+    const ok = window.confirm(`Hapus transaksi #${trx.id}? Stok barang di transaksi ini akan dikembalikan.`);
+    if (!ok) return;
+    await saveTransactions(transactions.filter(t => t.id !== trx.id));
+    // kembalikan stok produk yang namanya cocok dengan item di transaksi ini
+    const nextProducts = products.map(p => {
+      const sold = trx.items.find(it => it.name === p.name);
+      return sold ? { ...p, stock: p.stock + sold.qty } : p;
+    });
+    await saveProducts(nextProducts);
+    setExpandedTrx(null);
   };
 
   // ---- kasir logic ----
@@ -532,6 +639,10 @@ function KasirApp() {
 
   // ---- riwayat logic ----
   const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const weekStart = new Date();
+  const dayNum = weekStart.getDay();
+  weekStart.setDate(weekStart.getDate() - (dayNum === 0 ? 6 : dayNum - 1));
+  weekStart.setHours(0, 0, 0, 0);
   const todaysTransactions = transactions.filter(t => t.timestamp >= todayStart.getTime());
   const todaysRevenue = todaysTransactions.reduce((s, t) => s + t.total, 0);
 
@@ -539,13 +650,14 @@ function KasirApp() {
     const map = {};
     transactions.forEach(t => {
       const isToday = t.timestamp >= todayStart.getTime();
+      const isThisWeek = t.timestamp >= weekStart.getTime();
       t.items.forEach(it => {
-        if (!map[it.name]) map[it.name] = { name: it.name, today: 0, allTime: 0 };
-        map[it.name].allTime += it.qty;
+        if (!map[it.name]) map[it.name] = { name: it.name, today: 0, thisWeek: 0 };
+        if (isThisWeek) map[it.name].thisWeek += it.qty;
         if (isToday) map[it.name].today += it.qty;
       });
     });
-    return Object.values(map).sort((a, b) => b.allTime - a.allTime);
+    return Object.values(map).sort((a, b) => b.thisWeek - a.thisWeek);
   }, [transactions]);
 
   const transactionsByDate = useMemo(() => {
@@ -569,6 +681,28 @@ function KasirApp() {
     });
     return groups.map(g => ({ ...g, itemBreakdown: Object.values(g.itemMap).sort((a, b) => b.qty - a.qty) }));
   }, [transactions]);
+
+  // ---- modal/pengeluaran logic ----
+  const todaysExpenses = expenseEntries.filter(e => e.timestamp >= todayStart.getTime()).reduce((s, e) => s + e.total, 0);
+  const weekExpenses = expenseEntries.filter(e => e.timestamp >= weekStart.getTime()).reduce((s, e) => s + e.total, 0);
+  const allTimeExpenses = expenseEntries.reduce((s, e) => s + e.total, 0);
+
+  const expensesByDate = useMemo(() => {
+    const groups = [];
+    let current = null;
+    expenseEntries.forEach(e => {
+      const d = new Date(e.timestamp);
+      const dateKey = d.toDateString();
+      if (!current || current.dateKey !== dateKey) {
+        const label = d.toLocaleDateString('id-ID', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
+        current = { dateKey, label, entries: [], total: 0 };
+        groups.push(current);
+      }
+      current.entries.push(e);
+      current.total += e.total;
+    });
+    return groups;
+  }, [expenseEntries]);
 
   const printReceipt = () => {
     window.print();
@@ -698,6 +832,10 @@ function KasirApp() {
         <button className={`ka-tab ${activeTab === 'riwayat' ? 'active' : ''}`} onClick={() => setActiveTab('riwayat')}>
           <Ico size={19}>🕘</Ico> Riwayat
         </button>
+        <div className="ka-sidebar-divider" />
+        <button className={`ka-tab ${activeTab === 'modal' ? 'active' : ''}`} onClick={() => setActiveTab('modal')}>
+          <Ico size={19}>📉</Ico> Modal
+        </button>
         <button className="ka-tab" style={{ marginTop: 'auto' }} onClick={() => { setSettingsForm(storeSettings); setShowSettings(true); }}>
           <Ico size={19}>⚙️</Ico> Toko
         </button>
@@ -709,11 +847,13 @@ function KasirApp() {
             {activeTab === 'kasir' && 'Kasir'}
             {activeTab === 'produk' && 'Produk'}
             {activeTab === 'riwayat' && 'Riwayat Transaksi'}
+            {activeTab === 'modal' && 'Modal & Pengeluaran'}
           </h1>
           <p>
             {activeTab === 'kasir' && 'Pilih produk untuk menambahkan ke keranjang'}
             {activeTab === 'produk' && 'Kelola daftar produk dan stok barang'}
             {activeTab === 'riwayat' && 'Rekap penjualan dan riwayat transaksi'}
+            {activeTab === 'modal' && 'Catat & pantau pengeluaran bahan baku dan operasional toko'}
           </p>
         </div>
 
@@ -905,7 +1045,7 @@ function KasirApp() {
                         <tr>
                           <th>Item</th>
                           <th>Hari Ini</th>
-                          <th>Total Semua Waktu</th>
+                          <th>Minggu Ini</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -913,7 +1053,7 @@ function KasirApp() {
                           <tr key={it.name}>
                             <td style={{ fontWeight: 600 }}>{it.name}</td>
                             <td className="mono">{it.today} pcs</td>
-                            <td className="mono" style={{ fontWeight: 600, color: 'var(--rust)' }}>{it.allTime} pcs</td>
+                            <td className="mono" style={{ fontWeight: 600, color: 'var(--rust)' }}>{it.thisWeek} pcs</td>
                           </tr>
                         ))}
                       </tbody>
@@ -959,12 +1099,98 @@ function KasirApp() {
                                 ))}
                               </div>
                               <div className="ka-trx-actions">
+                                <button className="ka-btn danger" onClick={(e) => { e.stopPropagation(); deleteTransaction(t); }}>
+                                  <Ico size={13}>🗑️</Ico> Hapus
+                                </button>
                                 <button className="ka-btn secondary" onClick={(e) => { e.stopPropagation(); setLastTransaction(t); setShowReceipt(true); }}>
                                   <Ico size={13}>🖨️</Ico> Cetak Ulang
                                 </button>
                               </div>
                             </>
                           )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {activeTab === 'modal' && (
+            <div>
+              <div className="ka-summary-row">
+                <div className="ka-summary-card">
+                  <div className="label"><Ico size={13}>📉</Ico> Pengeluaran Hari Ini</div>
+                  <div className="value rust mono">{formatRupiah(todaysExpenses)}</div>
+                </div>
+                <div className="ka-summary-card">
+                  <div className="label"><Ico size={13}>📉</Ico> Pengeluaran Minggu Ini</div>
+                  <div className="value rust mono">{formatRupiah(weekExpenses)}</div>
+                </div>
+                <div className="ka-summary-card">
+                  <div className="label"><Ico size={13}>💰</Ico> Total Semua Waktu</div>
+                  <div className="value mono">{formatRupiah(allTimeExpenses)}</div>
+                </div>
+              </div>
+
+              <div className="ka-produk-head">
+                <h2>Daftar Bahan & Harga</h2>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="ka-btn secondary" onClick={openNewExpenseItem}><Ico size={14}>➕</Ico> Item Baru</button>
+                  <button className="ka-btn primary" style={{ width: 'auto' }} onClick={openLogExpense} disabled={expenseItems.length === 0}>
+                    <Ico size={14}>📉</Ico> Catat Pengeluaran
+                  </button>
+                </div>
+              </div>
+
+              <div className="ka-table-wrap" style={{ marginBottom: 26 }}>
+                <table className="ka-table">
+                  <thead>
+                    <tr><th>Nama Bahan</th><th>Satuan</th><th>Harga Terakhir</th><th></th></tr>
+                  </thead>
+                  <tbody>
+                    {expenseItems.map(it => (
+                      <tr key={it.id}>
+                        <td style={{ fontWeight: 600 }}>{it.name}</td>
+                        <td style={{ color: 'var(--ink-soft)' }}>{it.unit || '-'}</td>
+                        <td className="price-cell">{formatRupiah(it.price)}</td>
+                        <td>
+                          <div className="actions">
+                            <button className="ka-icon-btn" onClick={() => openEditExpenseItem(it)}><Ico size={14}>✏️</Ico></button>
+                            <button className="ka-icon-btn del" onClick={() => deleteExpenseItem(it.id)}><Ico size={14}>🗑️</Ico></button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <h2 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 16, margin: '0 0 12px' }}>Riwayat Pengeluaran</h2>
+              {expensesByDate.length === 0 ? (
+                <div className="ka-empty-state">
+                  <Ico size={34}>📉</Ico>
+                  <p>Belum ada pengeluaran yang dicatat.</p>
+                </div>
+              ) : (
+                expensesByDate.map(group => (
+                  <div key={group.dateKey} className="ka-date-group">
+                    <div className="ka-date-header">
+                      <span>{group.label}</span>
+                      <span className="mono">{formatRupiah(group.total)}</span>
+                    </div>
+                    <div className="ka-trx-list">
+                      {group.entries.map(e => (
+                        <div className="ka-trx-card" key={e.id} style={{ cursor: 'default' }}>
+                          <div className="ka-trx-head">
+                            <span className="id">{e.itemName}{e.unit ? ` (${e.unit})` : ''}</span>
+                            <span className="total">{formatRupiah(e.total)}</span>
+                          </div>
+                          <div className="ka-trx-sub" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span>{new Date(e.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} · {e.qty} x {formatRupiah(e.unitPrice)}</span>
+                            <button className="ka-icon-btn del" onClick={() => deleteExpenseEntry(e.id)}><Ico size={13}>🗑️</Ico></button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -1004,6 +1230,79 @@ function KasirApp() {
             <div className="ka-modal-actions">
               <button className="ka-btn secondary" onClick={closeProductModal}>Batal</button>
               <button className="ka-btn primary" onClick={submitProduct}>Simpan</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {expenseItemModal && (
+        <div className="ka-modal-overlay" onClick={() => setExpenseItemModal(null)}>
+          <div className="ka-modal" onClick={e => e.stopPropagation()}>
+            <h3>
+              {expenseItemModal === 'new' ? 'Item Bahan Baru' : 'Edit Bahan'}
+              <button onClick={() => setExpenseItemModal(null)}><Ico size={18}>✖️</Ico></button>
+            </h3>
+            <div className="ka-field">
+              <label>Nama Bahan</label>
+              <input value={eiForm.name} onChange={e => setEiForm({ ...eiForm, name: e.target.value })} placeholder="Contoh: Gelas 22 oz" />
+            </div>
+            <div className="ka-field-row">
+              <div className="ka-field">
+                <label>Satuan</label>
+                <input value={eiForm.unit} onChange={e => setEiForm({ ...eiForm, unit: e.target.value })} placeholder="kg / pcs / kaleng" />
+              </div>
+              <div className="ka-field">
+                <label>Harga (Rp)</label>
+                <input type="number" value={eiForm.price} onChange={e => setEiForm({ ...eiForm, price: e.target.value })} placeholder="0" />
+              </div>
+            </div>
+            <div className="ka-modal-actions">
+              <button className="ka-btn secondary" onClick={() => setExpenseItemModal(null)}>Batal</button>
+              <button className="ka-btn primary" onClick={submitExpenseItem}>Simpan</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showLogExpense && (
+        <div className="ka-modal-overlay" onClick={() => setShowLogExpense(false)}>
+          <div className="ka-modal" onClick={e => e.stopPropagation()}>
+            <h3>
+              Catat Pengeluaran
+              <button onClick={() => setShowLogExpense(false)}><Ico size={18}>✖️</Ico></button>
+            </h3>
+            <div className="ka-field">
+              <label>Bahan</label>
+              <select
+                value={logForm.itemId}
+                onChange={e => {
+                  const item = expenseItems.find(it => it.id === e.target.value);
+                  setLogForm({ ...logForm, itemId: e.target.value, unitPrice: item ? String(item.price) : '' });
+                }}
+                style={{ width: '100%', padding: '9px 11px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 13.5, fontFamily: "'IBM Plex Sans', sans-serif" }}
+              >
+                {expenseItems.map(it => (
+                  <option key={it.id} value={it.id}>{it.name}{it.unit ? ` (${it.unit})` : ''}</option>
+                ))}
+              </select>
+            </div>
+            <div className="ka-field-row">
+              <div className="ka-field">
+                <label>Jumlah</label>
+                <input type="number" value={logForm.qty} onChange={e => setLogForm({ ...logForm, qty: e.target.value })} placeholder="1" />
+              </div>
+              <div className="ka-field">
+                <label>Harga Satuan (Rp)</label>
+                <input type="number" value={logForm.unitPrice} onChange={e => setLogForm({ ...logForm, unitPrice: e.target.value })} placeholder="0" />
+              </div>
+            </div>
+            <div className="ka-row total" style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+              <span>Total</span>
+              <span>{formatRupiah((parseFloat(logForm.qty) || 0) * (parseFloat(logForm.unitPrice) || 0))}</span>
+            </div>
+            <div className="ka-modal-actions">
+              <button className="ka-btn secondary" onClick={() => setShowLogExpense(false)}>Batal</button>
+              <button className="ka-btn primary" onClick={submitLogExpense}>Simpan</button>
             </div>
           </div>
         </div>
