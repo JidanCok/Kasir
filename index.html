@@ -255,9 +255,30 @@ const STYLE = `
 .ka-summary-card .label { font-size: 12px; color: var(--ink-soft); display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
 .ka-summary-card .value { font-family: 'Space Grotesk', sans-serif; font-size: 22px; font-weight: 700; }
 .ka-summary-card .value.rust { color: var(--rust); }
+.ka-period-toggle { display: flex; gap: 4px; margin-top: 10px; }
+.ka-period-toggle button { flex: 1; border: 1px solid var(--border); background: #fff; color: var(--ink-soft); font-size: 10.5px; font-weight: 500; padding: 4px 2px; border-radius: 6px; cursor: pointer; font-family: 'IBM Plex Sans', sans-serif; }
+.ka-period-toggle button.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+.ka-summary-card-clickable { cursor: pointer; transition: border-color .12s ease, box-shadow .12s ease; }
+.ka-summary-card-clickable:hover { border-color: var(--accent); box-shadow: 0 3px 10px rgba(47,111,78,0.1); }
+.ka-card-arrow { color: var(--ink-soft); font-weight: 400; }
+.ka-analytics-layout { display: grid; grid-template-columns: 200px 1fr; gap: 22px; align-items: start; }
+.ka-analytics-sidebar { background: var(--paper-light); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+.ka-analytics-sidebar label { font-size: 11.5px; font-weight: 600; color: var(--ink-soft); display: block; margin-bottom: 4px; }
+.ka-analytics-main { min-width: 0; }
+.ka-chart { display: flex; align-items: flex-end; gap: 10px; min-height: 200px; padding: 10px 6px 0; overflow-x: auto; background: #fff; border: 1px solid var(--border); border-radius: 12px; }
+.ka-chart-col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; min-width: 56px; flex: 1; height: 200px; }
+.ka-chart-value { font-size: 9.5px; color: var(--ink-soft); margin-bottom: 4px; white-space: nowrap; }
+.ka-chart-bar { width: 26px; border-radius: 4px 4px 0 0; transition: height .2s ease; }
+.ka-chart-label { font-size: 10px; color: var(--ink-soft); margin: 8px 0 10px; text-align: center; white-space: nowrap; }
+@media (max-width: 560px) {
+  .ka-analytics-layout { grid-template-columns: 1fr; }
+}
 
 .ka-date-group { margin-bottom: 22px; }
 .ka-date-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.ka-date-header-clickable { cursor: pointer; user-select: none; }
+.ka-chevron { display: inline-block; font-size: 10px; transition: transform .15s ease; color: var(--ink-soft); }
+.ka-chevron.open { transform: rotate(90deg); }
 .ka-date-header span:first-child { font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 13.5px; }
 .ka-date-header span:last-child { font-size: 11.5px; color: var(--ink-soft); }
 .ka-date-itemcounts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
@@ -302,6 +323,43 @@ function Ico({ size = 16, children }) {
 
 const formatRupiah = (n) => 'Rp' + Math.round(n || 0).toLocaleString('id-ID');
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+const getWeekKey = (ts) => {
+  const d = new Date(ts);
+  const day = d.getDay();
+  d.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+};
+const getMonthKey = (ts) => {
+  const d = new Date(ts);
+  return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+};
+const formatBucketLabel = (ts, grouping) => {
+  if (grouping === 'month') return new Date(ts).toLocaleDateString('id-ID', { month: 'short', year: '2-digit' });
+  const start = new Date(ts);
+  const end = new Date(ts); end.setDate(end.getDate() + 6);
+  const f = (x) => x.toLocaleDateString('id-ID', { day: '2-digit', month: 'short' });
+  return `${f(start)}-${f(end)}`;
+};
+
+function MiniBarChart({ data, color, negativeColor }) {
+  if (!data.length) {
+    return <div className="ka-empty-state" style={{ padding: 30 }}><p>Belum ada data untuk periode ini.</p></div>;
+  }
+  const max = Math.max(...data.map(d => Math.abs(d.value)), 1);
+  return (
+    <div className="ka-chart">
+      {data.map((d, i) => (
+        <div className="ka-chart-col" key={i}>
+          <span className="ka-chart-value mono">{formatRupiah(d.value)}</span>
+          <div className="ka-chart-bar" style={{ height: `${Math.max(4, (Math.abs(d.value) / max) * 150)}px`, background: d.value < 0 && negativeColor ? negativeColor : color }} />
+          <span className="ka-chart-label">{d.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const SEED_PRODUCTS = [
   { id: uid(), name: 'Americano', price: 10000, stock: 20, category: 'Coffee' },
@@ -349,6 +407,8 @@ function KasirApp() {
 
   // riwayat state
   const [expandedTrx, setExpandedTrx] = useState(null);
+  const [collapsedDates, setCollapsedDates] = useState({});
+  const toggleDateGroup = (dateKey) => setCollapsedDates(prev => ({ ...prev, [dateKey]: !prev[dateKey] }));
 
   // modal/pengeluaran state
   const [expenseItems, setExpenseItems] = useState([]);
@@ -357,6 +417,11 @@ function KasirApp() {
   const [eiForm, setEiForm] = useState({ name: '', unit: '', price: '' });
   const [showLogExpense, setShowLogExpense] = useState(false);
   const [logForm, setLogForm] = useState({ itemId: '', qty: '1', unitPrice: '' });
+  const [expensePeriod, setExpensePeriod] = useState('today');
+  const [marginPeriod, setMarginPeriod] = useState('today');
+  const [modalView, setModalView] = useState('default'); // default | expense | margin
+  const [analyticsGrouping, setAnalyticsGrouping] = useState('week'); // week | month
+  const [expenseFilterItem, setExpenseFilterItem] = useState('all');
 
   const [saveError, setSaveError] = useState(false);
 
@@ -683,9 +748,49 @@ function KasirApp() {
   }, [transactions]);
 
   // ---- modal/pengeluaran logic ----
+  const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
+
   const todaysExpenses = expenseEntries.filter(e => e.timestamp >= todayStart.getTime()).reduce((s, e) => s + e.total, 0);
   const weekExpenses = expenseEntries.filter(e => e.timestamp >= weekStart.getTime()).reduce((s, e) => s + e.total, 0);
+  const monthExpenses = expenseEntries.filter(e => e.timestamp >= monthStart.getTime()).reduce((s, e) => s + e.total, 0);
   const allTimeExpenses = expenseEntries.reduce((s, e) => s + e.total, 0);
+
+  const weekRevenue = transactions.filter(t => t.timestamp >= weekStart.getTime()).reduce((s, t) => s + t.total, 0);
+  const monthRevenue = transactions.filter(t => t.timestamp >= monthStart.getTime()).reduce((s, t) => s + t.total, 0);
+
+  const expenseAnalytics = useMemo(() => {
+    const getKey = analyticsGrouping === 'month' ? getMonthKey : getWeekKey;
+    const buckets = {};
+    expenseEntries.forEach(e => {
+      if (expenseFilterItem !== 'all' && e.itemName !== expenseFilterItem) return;
+      const k = getKey(e.timestamp);
+      buckets[k] = (buckets[k] || 0) + e.total;
+    });
+    return Object.entries(buckets)
+      .map(([k, v]) => ({ key: Number(k), label: formatBucketLabel(Number(k), analyticsGrouping), value: v }))
+      .sort((a, b) => a.key - b.key)
+      .slice(-10);
+  }, [expenseEntries, analyticsGrouping, expenseFilterItem]);
+
+  const marginAnalytics = useMemo(() => {
+    const getKey = analyticsGrouping === 'month' ? getMonthKey : getWeekKey;
+    const revBuckets = {}, expBuckets = {};
+    transactions.forEach(t => { const k = getKey(t.timestamp); revBuckets[k] = (revBuckets[k] || 0) + t.total; });
+    expenseEntries.forEach(e => { const k = getKey(e.timestamp); expBuckets[k] = (expBuckets[k] || 0) + e.total; });
+    const keys = Array.from(new Set([...Object.keys(revBuckets), ...Object.keys(expBuckets)].map(Number))).sort((a, b) => a - b).slice(-10);
+    return keys.map(k => ({
+      key: k, label: formatBucketLabel(k, analyticsGrouping),
+      revenue: revBuckets[k] || 0, expense: expBuckets[k] || 0, value: (revBuckets[k] || 0) - (expBuckets[k] || 0),
+    }));
+  }, [transactions, expenseEntries, analyticsGrouping]);
+
+  const expenseByPeriod = { today: todaysExpenses, week: weekExpenses, month: monthExpenses };
+  const marginByPeriod = {
+    today: todaysRevenue - todaysExpenses,
+    week: weekRevenue - weekExpenses,
+    month: monthRevenue - monthExpenses,
+  };
+  const periodLabel = { today: 'Hari Ini', week: 'Minggu Ini', month: 'Bulan Ini' };
 
   const expensesByDate = useMemo(() => {
     const groups = [];
@@ -1068,12 +1173,15 @@ function KasirApp() {
                   <p>Belum ada transaksi.</p>
                 </div>
               ) : (
-                transactionsByDate.map(group => (
+                transactionsByDate.map((group, idx) => {
+                  const isOpen = collapsedDates.hasOwnProperty(group.dateKey) ? !collapsedDates[group.dateKey] : idx === 0;
+                  return (
                   <div key={group.dateKey} className="ka-date-group">
-                    <div className="ka-date-header">
-                      <span>{group.label}</span>
+                    <div className="ka-date-header ka-date-header-clickable" onClick={() => toggleDateGroup(group.dateKey)}>
+                      <span><span className={`ka-chevron ${isOpen ? 'open' : ''}`}>▸</span> {group.label}</span>
                       <span className="mono">{group.items.length} transaksi · {formatRupiah(group.total)}</span>
                     </div>
+                    {isOpen && <>
                     <div className="ka-date-breakdown">
                       {group.itemBreakdown.map(it => (
                         <div className="ka-breakdown-row" key={it.name}>
@@ -1111,8 +1219,10 @@ function KasirApp() {
                         </div>
                       ))}
                     </div>
+                    </>}
                   </div>
-                ))
+                  );
+                })
               )}
             </div>
           )}
@@ -1121,19 +1231,30 @@ function KasirApp() {
             <div>
               <div className="ka-summary-row">
                 <div className="ka-summary-card">
-                  <div className="label"><Ico size={13}>📉</Ico> Pengeluaran Hari Ini</div>
-                  <div className="value rust mono">{formatRupiah(todaysExpenses)}</div>
+                  <div className="label"><Ico size={13}>📉</Ico> Pengeluaran · {periodLabel[expensePeriod]}</div>
+                  <div className="value rust mono">{formatRupiah(expenseByPeriod[expensePeriod])}</div>
+                  <div className="ka-period-toggle">
+                    {['today', 'week', 'month'].map(p => (
+                      <button key={p} className={expensePeriod === p ? 'active' : ''} onClick={() => setExpensePeriod(p)}>{periodLabel[p]}</button>
+                    ))}
+                  </div>
                 </div>
-                <div className="ka-summary-card">
-                  <div className="label"><Ico size={13}>📉</Ico> Pengeluaran Minggu Ini</div>
-                  <div className="value rust mono">{formatRupiah(weekExpenses)}</div>
+                <div className="ka-summary-card ka-summary-card-clickable" onClick={() => setModalView('margin')}>
+                  <div className="label"><Ico size={13}>📈</Ico> Margin · {periodLabel[marginPeriod]} <span className="ka-card-arrow">›</span></div>
+                  <div className="value mono" style={{ color: marginByPeriod[marginPeriod] < 0 ? 'var(--danger)' : 'var(--accent)' }}>{formatRupiah(marginByPeriod[marginPeriod])}</div>
+                  <div className="ka-period-toggle">
+                    {['today', 'week', 'month'].map(p => (
+                      <button key={p} className={marginPeriod === p ? 'active' : ''} onClick={(e) => { e.stopPropagation(); setMarginPeriod(p); }}>{periodLabel[p]}</button>
+                    ))}
+                  </div>
                 </div>
-                <div className="ka-summary-card">
-                  <div className="label"><Ico size={13}>💰</Ico> Total Semua Waktu</div>
+                <div className="ka-summary-card ka-summary-card-clickable" onClick={() => setModalView('expense')}>
+                  <div className="label"><Ico size={13}>💰</Ico> Total Semua Waktu <span className="ka-card-arrow">›</span></div>
                   <div className="value mono">{formatRupiah(allTimeExpenses)}</div>
                 </div>
               </div>
 
+              {modalView === 'default' && <>
               <div className="ka-produk-head">
                 <h2>Daftar Bahan & Harga</h2>
                 <div style={{ display: 'flex', gap: 8 }}>
@@ -1196,6 +1317,83 @@ function KasirApp() {
                     </div>
                   </div>
                 ))
+              )}
+              </>}
+
+              {modalView === 'expense' && (
+                <div>
+                  <button className="ka-btn ghost" style={{ marginBottom: 14, paddingLeft: 0 }} onClick={() => setModalView('default')}>← Kembali ke Ringkasan</button>
+                  <div className="ka-analytics-layout">
+                    <div className="ka-analytics-sidebar">
+                      <div className="ka-field">
+                        <label>Kelompokkan</label>
+                        <div className="ka-period-toggle" style={{ marginTop: 4 }}>
+                          <button className={analyticsGrouping === 'week' ? 'active' : ''} onClick={() => setAnalyticsGrouping('week')}>Mingguan</button>
+                          <button className={analyticsGrouping === 'month' ? 'active' : ''} onClick={() => setAnalyticsGrouping('month')}>Bulanan</button>
+                        </div>
+                      </div>
+                      <div className="ka-field">
+                        <label>Filter Bahan</label>
+                        <select value={expenseFilterItem} onChange={e => setExpenseFilterItem(e.target.value)} style={{ width: '100%', padding: '9px 11px', border: '1px solid var(--border)', borderRadius: 8, fontSize: 13, fontFamily: "'IBM Plex Sans', sans-serif" }}>
+                          <option value="all">Semua Bahan</option>
+                          {expenseItems.map(it => <option key={it.id} value={it.name}>{it.name}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="ka-analytics-main">
+                      <h2 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 16, margin: '0 0 4px' }}>Pengeluaran {expenseFilterItem !== 'all' ? `· ${expenseFilterItem}` : ''}</h2>
+                      <p style={{ color: 'var(--ink-soft)', fontSize: 12.5, margin: '0 0 16px' }}>{analyticsGrouping === 'week' ? '10 minggu terakhir' : '10 bulan terakhir'}</p>
+                      <MiniBarChart data={expenseAnalytics} color="var(--rust)" />
+                      <div className="ka-table-wrap" style={{ marginTop: 18 }}>
+                        <table className="ka-table">
+                          <thead><tr><th>Periode</th><th>Total Pengeluaran</th></tr></thead>
+                          <tbody>
+                            {[...expenseAnalytics].reverse().map(b => (
+                              <tr key={b.key}><td style={{ fontWeight: 600 }}>{b.label}</td><td className="price-cell">{formatRupiah(b.value)}</td></tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {modalView === 'margin' && (
+                <div>
+                  <button className="ka-btn ghost" style={{ marginBottom: 14, paddingLeft: 0 }} onClick={() => setModalView('default')}>← Kembali ke Ringkasan</button>
+                  <div className="ka-analytics-layout">
+                    <div className="ka-analytics-sidebar">
+                      <div className="ka-field">
+                        <label>Kelompokkan</label>
+                        <div className="ka-period-toggle" style={{ marginTop: 4 }}>
+                          <button className={analyticsGrouping === 'week' ? 'active' : ''} onClick={() => setAnalyticsGrouping('week')}>Mingguan</button>
+                          <button className={analyticsGrouping === 'month' ? 'active' : ''} onClick={() => setAnalyticsGrouping('month')}>Bulanan</button>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="ka-analytics-main">
+                      <h2 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 16, margin: '0 0 4px' }}>Margin (Pendapatan − Pengeluaran)</h2>
+                      <p style={{ color: 'var(--ink-soft)', fontSize: 12.5, margin: '0 0 16px' }}>{analyticsGrouping === 'week' ? '10 minggu terakhir' : '10 bulan terakhir'}</p>
+                      <MiniBarChart data={marginAnalytics} color="var(--accent)" negativeColor="var(--danger)" />
+                      <div className="ka-table-wrap" style={{ marginTop: 18 }}>
+                        <table className="ka-table">
+                          <thead><tr><th>Periode</th><th>Pendapatan</th><th>Pengeluaran</th><th>Margin</th></tr></thead>
+                          <tbody>
+                            {[...marginAnalytics].reverse().map(b => (
+                              <tr key={b.key}>
+                                <td style={{ fontWeight: 600 }}>{b.label}</td>
+                                <td className="mono">{formatRupiah(b.revenue)}</td>
+                                <td className="mono">{formatRupiah(b.expense)}</td>
+                                <td className="price-cell" style={{ color: b.value < 0 ? 'var(--danger)' : 'var(--accent)' }}>{formatRupiah(b.value)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
           )}
