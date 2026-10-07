@@ -244,6 +244,9 @@ const STYLE = `
 .ka-field label { display: block; font-size: 12px; font-weight: 600; color: var(--ink-soft); margin-bottom: 5px; }
 .ka-field input { width: 100%; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px; font-size: 13.5px; font-family: 'IBM Plex Sans', sans-serif; outline: none; }
 .ka-field input:focus { border-color: var(--accent); }
+.ka-backup-section { border-top: 1px solid var(--border); margin-top: 18px; padding-top: 16px; }
+.ka-backup-section label { display: block; font-size: 12px; font-weight: 600; color: var(--ink-soft); margin-bottom: 4px; }
+.ka-backup-section p { font-size: 11.5px; color: var(--ink-soft); margin: 0 0 10px; line-height: 1.5; }
 .ka-field-row { display: flex; gap: 10px; }
 .ka-field-row .ka-field { flex: 1; }
 .ka-modal-actions { display: flex; gap: 10px; margin-top: 18px; }
@@ -251,6 +254,13 @@ const STYLE = `
 
 /* --- Riwayat tab --- */
 .ka-summary-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 22px; }
+.ka-insight-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-bottom: 22px; }
+.ka-insight-card { background: var(--accent-light); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; display: flex; align-items: center; gap: 12px; }
+.ka-insight-icon { font-size: 22px; }
+.ka-insight-label { font-size: 11.5px; color: var(--ink-soft); margin-bottom: 3px; }
+.ka-insight-value { font-family: 'Space Grotesk', sans-serif; font-size: 14px; font-weight: 700; color: var(--accent-dark); }
+.ka-insight-value .mono { font-weight: 500; font-size: 12px; color: var(--ink-soft); }
+@media (max-width: 560px) { .ka-insight-row { grid-template-columns: 1fr; } }
 .ka-summary-card { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
 .ka-summary-card .label { font-size: 12px; color: var(--ink-soft); display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
 .ka-summary-card .value { font-family: 'Space Grotesk', sans-serif; font-size: 22px; font-weight: 700; }
@@ -398,6 +408,7 @@ function KasirApp() {
   const [activeCategory, setActiveCategory] = useState('Semua');
   const [cashInput, setCashInput] = useState('');
   const [discountInput, setDiscountInput] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState('tunai'); // tunai | qris
   const [lastTransaction, setLastTransaction] = useState(null);
   const [showReceipt, setShowReceipt] = useState(false);
 
@@ -417,6 +428,7 @@ function KasirApp() {
   const [eiForm, setEiForm] = useState({ name: '', unit: '', price: '' });
   const [showLogExpense, setShowLogExpense] = useState(false);
   const [logForm, setLogForm] = useState({ itemId: '', qty: '1', unitPrice: '' });
+  const [editingExpenseEntryId, setEditingExpenseEntryId] = useState(null);
   const [expensePeriod, setExpensePeriod] = useState('today');
   const [marginPeriod, setMarginPeriod] = useState('today');
   const [modalView, setModalView] = useState('default'); // default | expense | margin
@@ -521,7 +533,14 @@ function KasirApp() {
 
   const openLogExpense = () => {
     const first = expenseItems[0];
+    setEditingExpenseEntryId(null);
     setLogForm({ itemId: first ? first.id : '', qty: '1', unitPrice: first ? String(first.price) : '' });
+    setShowLogExpense(true);
+  };
+
+  const openEditExpenseEntry = (entry) => {
+    setEditingExpenseEntryId(entry.id);
+    setLogForm({ itemId: entry.itemId, qty: String(entry.qty), unitPrice: String(entry.unitPrice) });
     setShowLogExpense(true);
   };
 
@@ -531,10 +550,17 @@ function KasirApp() {
     const qty = Math.max(0, parseFloat(logForm.qty) || 0);
     const unitPrice = Math.max(0, parseFloat(logForm.unitPrice) || 0);
     if (qty <= 0) return;
-    const entry = { id: uid().toUpperCase(), timestamp: Date.now(), itemId: item.id, itemName: item.name, unit: item.unit, qty, unitPrice, total: qty * unitPrice };
-    await saveExpenseEntries([entry, ...expenseEntries]);
+    if (editingExpenseEntryId) {
+      await saveExpenseEntries(expenseEntries.map(e => e.id === editingExpenseEntryId
+        ? { ...e, itemId: item.id, itemName: item.name, unit: item.unit, qty, unitPrice, total: qty * unitPrice }
+        : e));
+    } else {
+      const entry = { id: uid().toUpperCase(), timestamp: Date.now(), itemId: item.id, itemName: item.name, unit: item.unit, qty, unitPrice, total: qty * unitPrice };
+      await saveExpenseEntries([entry, ...expenseEntries]);
+    }
     // perbarui harga terakhir di katalog biar kepake lagi di pencatatan berikutnya
     await saveExpenseItems(expenseItems.map(it => it.id === item.id ? { ...it, price: unitPrice } : it));
+    setEditingExpenseEntryId(null);
     setShowLogExpense(false);
   };
 
@@ -561,6 +587,47 @@ function KasirApp() {
   const submitSettings = async () => {
     await saveStoreSettings(settingsForm);
     setShowSettings(false);
+  };
+
+  const exportAllData = () => {
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      app: 'warung-kasir-backup',
+      version: 1,
+      products, transactions, storeSettings, expenseItems, expenseEntries,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const dateStr = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `backup-kasir-${dateStr}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importAllData = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const data = JSON.parse(reader.result);
+        if (data.app !== 'warung-kasir-backup') throw new Error('bukan file backup yang valid');
+        const ok = window.confirm('Import akan MENIMPA semua data saat ini (produk, transaksi, pengeluaran, pengaturan toko) dengan isi file backup. Lanjutkan?');
+        if (!ok) return;
+        if (data.products) await saveProducts(data.products);
+        if (data.transactions) await saveTransactions(data.transactions);
+        if (data.storeSettings) await saveStoreSettings(data.storeSettings);
+        if (data.expenseItems) await saveExpenseItems(data.expenseItems);
+        if (data.expenseEntries) await saveExpenseEntries(data.expenseEntries);
+        window.alert('Import berhasil.');
+      } catch (err) {
+        window.alert('Gagal import: file tidak valid.');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
   const saveTransactions = async (next) => {
@@ -641,7 +708,7 @@ function KasirApp() {
   const finalTotal = cartTotal - discountAmount;
   const cashValue = parseFloat(cashInput) || 0;
   const change = cashValue - finalTotal;
-  const canCheckout = cart.length > 0 && cashValue >= finalTotal;
+  const canCheckout = cart.length > 0 && (paymentMethod === 'qris' || cashValue >= finalTotal);
 
   const checkout = async () => {
     if (!canCheckout) return;
@@ -653,8 +720,9 @@ function KasirApp() {
       discountPercent: discountPercent,
       discountAmount: discountAmount,
       total: finalTotal,
-      cash: cashValue,
-      change: change,
+      paymentMethod: paymentMethod,
+      cash: paymentMethod === 'qris' ? finalTotal : cashValue,
+      change: paymentMethod === 'qris' ? 0 : change,
     };
     const nextTransactions = [trx, ...transactions];
     const nextProducts = products.map(p => {
@@ -668,6 +736,7 @@ function KasirApp() {
     setCart([]);
     setCashInput('');
     setDiscountInput('');
+    setPaymentMethod('tunai');
     setShowReceipt(true);
   };
 
@@ -723,6 +792,25 @@ function KasirApp() {
       });
     });
     return Object.values(map).sort((a, b) => b.thisWeek - a.thisWeek);
+  }, [transactions]);
+
+  const topSellingAllTime = useMemo(() => {
+    const map = {};
+    transactions.forEach(t => t.items.forEach(it => { map[it.name] = (map[it.name] || 0) + it.qty; }));
+    const sorted = Object.entries(map).sort((a, b) => b[1] - a[1]);
+    return sorted.length ? { name: sorted[0][0], qty: sorted[0][1] } : null;
+  }, [transactions]);
+
+  const busiestHour = useMemo(() => {
+    if (transactions.length === 0) return null;
+    const counts = {};
+    transactions.forEach(t => {
+      const h = new Date(t.timestamp).getHours();
+      counts[h] = (counts[h] || 0) + 1;
+    });
+    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    const hour = Number(sorted[0][0]);
+    return { range: `${String(hour).padStart(2, '0')}.00–${String((hour + 1) % 24).padStart(2, '0')}.00`, count: sorted[0][1] };
   }, [transactions]);
 
   const transactionsByDate = useMemo(() => {
@@ -1053,18 +1141,28 @@ function KasirApp() {
                         </div>
                       )}
                       <div className="ka-row total"><span>Total</span><span>{formatRupiah(finalTotal)}</span></div>
-                      <input
-                        className="ka-cash-input"
-                        placeholder="Uang diterima (Rp)"
-                        type="number"
-                        value={cashInput}
-                        onChange={e => setCashInput(e.target.value)}
-                      />
-                      {cashInput !== '' && (
-                        <div className="ka-row" style={{ color: change < 0 ? '#A23B2E' : '#2F6F4E', fontWeight: 600 }}>
-                          <span>{change < 0 ? 'Kurang' : 'Kembalian'}</span>
-                          <span className="mono">{formatRupiah(Math.abs(change))}</span>
-                        </div>
+                      <div className="ka-period-toggle" style={{ marginBottom: 10 }}>
+                        <button className={paymentMethod === 'tunai' ? 'active' : ''} onClick={() => setPaymentMethod('tunai')}>💵 Tunai</button>
+                        <button className={paymentMethod === 'qris' ? 'active' : ''} onClick={() => setPaymentMethod('qris')}>📱 QRIS</button>
+                      </div>
+                      {paymentMethod === 'tunai' ? (
+                        <>
+                          <input
+                            className="ka-cash-input"
+                            placeholder="Uang diterima (Rp)"
+                            type="number"
+                            value={cashInput}
+                            onChange={e => setCashInput(e.target.value)}
+                          />
+                          {cashInput !== '' && (
+                            <div className="ka-row" style={{ color: change < 0 ? '#A23B2E' : '#2F6F4E', fontWeight: 600 }}>
+                              <span>{change < 0 ? 'Kurang' : 'Kembalian'}</span>
+                              <span className="mono">{formatRupiah(Math.abs(change))}</span>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <p style={{ fontSize: 12, color: 'var(--ink-soft)', margin: '0 0 10px' }}>Pembayaran via QRIS — jumlah dibayar pas, tanpa kembalian.</p>
                       )}
                       <button className="ka-btn primary" disabled={!canCheckout} onClick={checkout}>
                         <Ico size={15}>💰</Ico> Selesaikan Transaksi
@@ -1141,6 +1239,29 @@ function KasirApp() {
                 </div>
               </div>
 
+              {(topSellingAllTime || busiestHour) && (
+                <div className="ka-insight-row">
+                  {topSellingAllTime && (
+                    <div className="ka-insight-card">
+                      <span className="ka-insight-icon">🏆</span>
+                      <div>
+                        <div className="ka-insight-label">Menu Terlaris Sepanjang Masa</div>
+                        <div className="ka-insight-value">{topSellingAllTime.name} <span className="mono">· {topSellingAllTime.qty} pcs</span></div>
+                      </div>
+                    </div>
+                  )}
+                  {busiestHour && (
+                    <div className="ka-insight-card">
+                      <span className="ka-insight-icon">⏰</span>
+                      <div>
+                        <div className="ka-insight-label">Jam Tersibuk</div>
+                        <div className="ka-insight-value">{busiestHour.range} <span className="mono">· {busiestHour.count} transaksi</span></div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {itemSalesSummary.length > 0 && (
                 <div style={{ marginBottom: 24 }}>
                   <h2 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 16, margin: '0 0 10px' }}>Terjual per Item</h2>
@@ -1198,7 +1319,7 @@ function KasirApp() {
                             <span className="id">#{t.id}</span>
                             <span className="total">{formatRupiah(t.total)}</span>
                           </div>
-                          <div className="ka-trx-sub">{new Date(t.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} · {t.items.length} item</div>
+                          <div className="ka-trx-sub">{new Date(t.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} · {t.items.length} item · {t.paymentMethod === 'qris' ? '📱 QRIS' : '💵 Tunai'}</div>
                           {expandedTrx === t.id && (
                             <>
                               <div className="ka-trx-items">
@@ -1310,7 +1431,10 @@ function KasirApp() {
                           </div>
                           <div className="ka-trx-sub" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <span>{new Date(e.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} · {e.qty} x {formatRupiah(e.unitPrice)}</span>
-                            <button className="ka-icon-btn del" onClick={() => deleteExpenseEntry(e.id)}><Ico size={13}>🗑️</Ico></button>
+                            <span style={{ display: 'flex', gap: 6 }}>
+                              <button className="ka-icon-btn" onClick={() => openEditExpenseEntry(e)}><Ico size={13}>✏️</Ico></button>
+                              <button className="ka-icon-btn del" onClick={() => deleteExpenseEntry(e.id)}><Ico size={13}>🗑️</Ico></button>
+                            </span>
                           </div>
                         </div>
                       ))}
@@ -1463,11 +1587,11 @@ function KasirApp() {
       )}
 
       {showLogExpense && (
-        <div className="ka-modal-overlay" onClick={() => setShowLogExpense(false)}>
+        <div className="ka-modal-overlay" onClick={() => { setShowLogExpense(false); setEditingExpenseEntryId(null); }}>
           <div className="ka-modal" onClick={e => e.stopPropagation()}>
             <h3>
-              Catat Pengeluaran
-              <button onClick={() => setShowLogExpense(false)}><Ico size={18}>✖️</Ico></button>
+              {editingExpenseEntryId ? 'Edit Pengeluaran' : 'Catat Pengeluaran'}
+              <button onClick={() => { setShowLogExpense(false); setEditingExpenseEntryId(null); }}><Ico size={18}>✖️</Ico></button>
             </h3>
             <div className="ka-field">
               <label>Bahan</label>
@@ -1499,7 +1623,7 @@ function KasirApp() {
               <span>{formatRupiah((parseFloat(logForm.qty) || 0) * (parseFloat(logForm.unitPrice) || 0))}</span>
             </div>
             <div className="ka-modal-actions">
-              <button className="ka-btn secondary" onClick={() => setShowLogExpense(false)}>Batal</button>
+              <button className="ka-btn secondary" onClick={() => { setShowLogExpense(false); setEditingExpenseEntryId(null); }}>Batal</button>
               <button className="ka-btn primary" onClick={submitLogExpense}>Simpan</button>
             </div>
           </div>
@@ -1530,6 +1654,17 @@ function KasirApp() {
             <div className="ka-modal-actions">
               <button className="ka-btn secondary" onClick={() => setShowSettings(false)}>Batal</button>
               <button className="ka-btn primary" onClick={submitSettings}>Simpan</button>
+            </div>
+            <div className="ka-backup-section">
+              <label>Cadangkan Data</label>
+              <p>Simpan semua data (produk, transaksi, pengeluaran) ke file, atau pulihkan dari file backup sebelumnya.</p>
+              <div className="ka-modal-actions">
+                <button className="ka-btn secondary" onClick={exportAllData}><Ico size={14}>📤</Ico> Export Data</button>
+                <label className="ka-btn secondary" style={{ cursor: 'pointer', textAlign: 'center' }}>
+                  <Plus size={14} style={{ marginRight: 4 }} />Import Data
+                  <input type="file" accept="application/json" onChange={importAllData} style={{ display: 'none' }} />
+                </label>
+              </div>
             </div>
           </div>
         </div>
@@ -1564,8 +1699,13 @@ function KasirApp() {
                 </>
               )}
               <div className="ka-receipt-total-row"><span>Total</span><span>{formatRupiah(lastTransaction.total)}</span></div>
-              <div className="ka-receipt-line"><span>Tunai</span><span>{formatRupiah(lastTransaction.cash)}</span></div>
-              <div className="ka-receipt-line"><span>Kembali</span><span>{formatRupiah(lastTransaction.change)}</span></div>
+              <div className="ka-receipt-line"><span>Bayar via</span><span>{lastTransaction.paymentMethod === 'qris' ? 'QRIS' : 'Tunai'}</span></div>
+              {lastTransaction.paymentMethod !== 'qris' && (
+                <>
+                  <div className="ka-receipt-line"><span>Tunai</span><span>{formatRupiah(lastTransaction.cash)}</span></div>
+                  <div className="ka-receipt-line"><span>Kembali</span><span>{formatRupiah(lastTransaction.change)}</span></div>
+                </>
+              )}
               <div className="ka-receipt-divider" />
               <div style={{ textAlign: 'center', fontSize: 11.5, color: '#6B7268', marginTop: 10 }}>Terima kasih atas kunjungan Anda</div>
             </div>
