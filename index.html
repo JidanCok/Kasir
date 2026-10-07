@@ -187,7 +187,9 @@ const STYLE = `
   background: var(--paper-light); border: 1px solid var(--border); border-radius: 14px;
   padding: 18px; position: sticky; top: 0; display: flex; flex-direction: column; max-height: calc(100vh - 160px);
 }
-.ka-cart h2 { font-family: 'Space Grotesk', sans-serif; font-size: 16px; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; }
+.ka-cart h2 { font-family: 'Space Grotesk', sans-serif; font-size: 16px; margin: 0; display: flex; align-items: center; gap: 8px; }
+.ka-cart-header-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.ka-held-badge { border: 1px solid var(--rust); background: var(--rust-light); color: var(--rust); font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 999px; cursor: pointer; font-family: 'IBM Plex Sans', sans-serif; }
 .ka-cart .empty { color: var(--ink-soft); font-size: 13px; padding: 30px 4px; text-align: center; line-height: 1.5; }
 .ka-cart-items { flex: 1; overflow-y: auto; margin: 12px 0; display: flex; flex-direction: column; gap: 10px; }
 .ka-cart-item { display: flex; align-items: center; gap: 8px; font-size: 12.5px; border-bottom: 1px dashed var(--border); padding-bottom: 10px; }
@@ -244,6 +246,12 @@ const STYLE = `
 .ka-field label { display: block; font-size: 12px; font-weight: 600; color: var(--ink-soft); margin-bottom: 5px; }
 .ka-field input { width: 100%; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px; font-size: 13.5px; font-family: 'IBM Plex Sans', sans-serif; outline: none; }
 .ka-field input:focus { border-color: var(--accent); }
+.ka-recipe-section { border-top: 1px solid var(--border); margin-top: 6px; padding-top: 14px; }
+.ka-recipe-section > label { display: block; font-size: 12px; font-weight: 600; color: var(--ink-soft); margin-bottom: 8px; }
+.ka-recipe-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.ka-recipe-row select { flex: 1; min-width: 0; padding: 8px; border: 1px solid var(--border); border-radius: 8px; font-size: 12.5px; font-family: 'IBM Plex Sans', sans-serif; }
+.ka-recipe-row input { width: 64px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; font-size: 12.5px; font-family: 'IBM Plex Mono', monospace; }
+.ka-recipe-row .unit { font-size: 11px; color: var(--ink-soft); min-width: 34px; }
 .ka-backup-section { border-top: 1px solid var(--border); margin-top: 18px; padding-top: 16px; }
 .ka-backup-section label { display: block; font-size: 12px; font-weight: 600; color: var(--ink-soft); margin-bottom: 4px; }
 .ka-backup-section p { font-size: 11.5px; color: var(--ink-soft); margin: 0 0 10px; line-height: 1.5; }
@@ -409,12 +417,14 @@ function KasirApp() {
   const [cashInput, setCashInput] = useState('');
   const [discountInput, setDiscountInput] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('tunai'); // tunai | qris
+  const [heldCarts, setHeldCarts] = useState([]);
+  const [showHeldList, setShowHeldList] = useState(false);
   const [lastTransaction, setLastTransaction] = useState(null);
   const [showReceipt, setShowReceipt] = useState(false);
 
   // produk state
   const [productModal, setProductModal] = useState(null); // null | 'new' | product object
-  const [pForm, setPForm] = useState({ name: '', price: '', stock: '', category: '' });
+  const [pForm, setPForm] = useState({ name: '', price: '', stock: '', category: '', recipe: [] });
 
   // riwayat state
   const [expandedTrx, setExpandedTrx] = useState(null);
@@ -470,12 +480,18 @@ function KasirApp() {
         const ee = await window.storage.get('expense-entries');
         if (ee && ee.value) loadedExpenseEntries = JSON.parse(ee.value);
       } catch (e) { /* none yet */ }
+      let loadedHeldCarts = [];
+      try {
+        const hc = await window.storage.get('held-carts');
+        if (hc && hc.value) loadedHeldCarts = JSON.parse(hc.value);
+      } catch (e) { /* none yet */ }
       setProducts(loadedProducts);
       setTransactions(loadedTransactions);
       setStoreSettings(loadedSettings);
       setSettingsForm(loadedSettings);
       setExpenseItems(loadedExpenseItems);
       setExpenseEntries(loadedExpenseEntries);
+      setHeldCarts(loadedHeldCarts);
       setReady(true);
       // persist seed if this was a first run
       try {
@@ -710,6 +726,40 @@ function KasirApp() {
   const change = cashValue - finalTotal;
   const canCheckout = cart.length > 0 && (paymentMethod === 'qris' || cashValue >= finalTotal);
 
+  const saveHeldCarts = async (next) => {
+    setHeldCarts(next);
+    try {
+      const res = await window.storage.set('held-carts', JSON.stringify(next));
+      if (!res) setSaveError(true);
+    } catch (e) { setSaveError(true); }
+  };
+
+  const holdCurrentCart = async () => {
+    if (cart.length === 0) return;
+    const held = { id: uid(), timestamp: Date.now(), cart, discountInput, paymentMethod };
+    await saveHeldCarts([held, ...heldCarts]);
+    setCart([]);
+    setDiscountInput('');
+    setCashInput('');
+    setPaymentMethod('tunai');
+  };
+
+  const resumeHeldCart = async (held) => {
+    if (cart.length > 0) {
+      const ok = window.confirm('Keranjang aktif saat ini akan diganti dengan transaksi tertahan ini. Lanjutkan?');
+      if (!ok) return;
+    }
+    setCart(held.cart);
+    setDiscountInput(held.discountInput || '');
+    setPaymentMethod(held.paymentMethod || 'tunai');
+    await saveHeldCarts(heldCarts.filter(h => h.id !== held.id));
+    setShowHeldList(false);
+  };
+
+  const deleteHeldCart = async (id) => {
+    await saveHeldCarts(heldCarts.filter(h => h.id !== id));
+  };
+
   const checkout = async () => {
     if (!canCheckout) return;
     const trx = {
@@ -742,14 +792,27 @@ function KasirApp() {
 
   // ---- produk logic ----
   const openNewProduct = () => {
-    setPForm({ name: '', price: '', stock: '', category: '' });
+    setPForm({ name: '', price: '', stock: '', category: '', recipe: [] });
     setProductModal('new');
   };
   const openEditProduct = (p) => {
-    setPForm({ name: p.name, price: String(p.price), stock: String(p.stock), category: p.category || '' });
+    setPForm({
+      name: p.name, price: String(p.price), stock: String(p.stock), category: p.category || '',
+      recipe: (p.recipe || []).map(r => ({ expenseItemId: r.expenseItemId, qty: String(r.qty) })),
+    });
     setProductModal(p);
   };
   const closeProductModal = () => setProductModal(null);
+
+  // resep: tiap baris = 1 bahan modal + jumlah yang dipakai per 1 porsi
+  const addRecipeRow = () => setPForm(f => ({ ...f, recipe: [...(f.recipe || []), { expenseItemId: expenseItems[0] ? expenseItems[0].id : '', qty: '' }] }));
+  const updateRecipeRow = (idx, patch) => setPForm(f => ({ ...f, recipe: f.recipe.map((r, i) => i === idx ? { ...r, ...patch } : r) }));
+  const removeRecipeRow = (idx) => setPForm(f => ({ ...f, recipe: f.recipe.filter((_, i) => i !== idx) }));
+
+  const computeHPP = (recipe) => (recipe || []).reduce((sum, r) => {
+    const item = expenseItems.find(it => it.id === r.expenseItemId);
+    return sum + (item ? item.price * (parseFloat(r.qty) || 0) : 0);
+  }, 0);
 
   const submitProduct = async () => {
     if (!pForm.name.trim() || pForm.price === '' || pForm.stock === '') return;
@@ -758,6 +821,9 @@ function KasirApp() {
       price: Math.max(0, parseFloat(pForm.price) || 0),
       stock: Math.max(0, parseInt(pForm.stock) || 0),
       category: pForm.category.trim() || 'Lainnya',
+      recipe: (pForm.recipe || [])
+        .filter(r => r.expenseItemId && (parseFloat(r.qty) || 0) > 0)
+        .map(r => ({ expenseItemId: r.expenseItemId, qty: parseFloat(r.qty) })),
     };
     if (productModal === 'new') {
       await saveProducts([...products, { id: uid(), ...payload }]);
@@ -995,6 +1061,78 @@ function KasirApp() {
     a.click();
   };
 
+  const [btPrinting, setBtPrinting] = useState(false);
+
+  const buildEscPosText = (trx, settings) => {
+    const lines = [];
+    const divider = '--------------------------------\n';
+    lines.push('\x1B\x40'); // reset printer
+    lines.push('\x1B\x61\x01'); // center align
+    if (settings.name) lines.push(settings.name + '\n');
+    lines.push(formatDateTime(trx.timestamp) + '\n');
+    lines.push('No. #' + trx.id + '\n');
+    lines.push(divider);
+    lines.push('\x1B\x61\x00'); // left align
+    trx.items.forEach(it => {
+      lines.push(it.name + '\n');
+      const left = `  ${it.qty} x ${formatRupiah(it.price)}`;
+      const right = formatRupiah(it.price * it.qty);
+      const pad = Math.max(1, 32 - left.length - right.length);
+      lines.push(left + ' '.repeat(pad) + right + '\n');
+    });
+    lines.push(divider);
+    lines.push(`Total: ${formatRupiah(trx.total)}\n`);
+    if (trx.paymentMethod === 'qris') {
+      lines.push('Bayar via QRIS\n');
+    } else {
+      lines.push(`Tunai: ${formatRupiah(trx.cash)}\n`);
+      lines.push(`Kembali: ${formatRupiah(trx.change)}\n`);
+    }
+    lines.push('\x1B\x61\x01');
+    lines.push('\nTerima kasih\n\n\n\n');
+    lines.push('\x1D\x56\x42\x00'); // potong kertas (jika didukung printer)
+    return lines.join('');
+  };
+
+  const printViaBluetooth = async () => {
+    if (!lastTransaction) return;
+    if (!navigator.bluetooth) {
+      window.alert('Browser/perangkat ini tidak mendukung Bluetooth Web API. Fitur ini hanya berjalan di Chrome Android (tidak didukung di iPhone/Safari).');
+      return;
+    }
+    setBtPrinting(true);
+    try {
+      const device = await navigator.bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: [
+          '000018f0-0000-1000-8000-00805f9b34fb',
+          '0000ff00-0000-1000-8000-00805f9b34fb',
+          '0000ffe0-0000-1000-8000-00805f9b34fb',
+          '49535343-fe7d-4ae5-8fa9-9fafd205e455',
+        ],
+      });
+      const server = await device.gatt.connect();
+      const services = await server.getPrimaryServices();
+      let writableChar = null;
+      for (const service of services) {
+        const chars = await service.getCharacteristics();
+        writableChar = chars.find(c => c.properties.write || c.properties.writeWithoutResponse);
+        if (writableChar) break;
+      }
+      if (!writableChar) throw new Error('Tidak ditemukan jalur tulis ke printer. Printer ini mungkin tidak kompatibel.');
+      const text = buildEscPosText(lastTransaction, storeSettings);
+      const bytes = new TextEncoder().encode(text);
+      const chunkSize = 100;
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        await writableChar.writeValue(bytes.slice(i, i + chunkSize));
+      }
+    } catch (err) {
+      window.alert('Gagal mencetak via Bluetooth: ' + (err && err.message ? err.message : 'tidak diketahui') + '. Pastikan printer menyala dan dalam jangkauan.');
+    } finally {
+      setBtPrinting(false);
+    }
+  };
+
   const formatDateTime = (ts) => {
     const d = new Date(ts);
     return d.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) +
@@ -1104,7 +1242,17 @@ function KasirApp() {
               </div>
 
               <div className="ka-cart">
-                <h2><Ico size={17}>🛒</Ico> Keranjang</h2>
+                <div className="ka-cart-header-row">
+                  <h2><Ico size={17}>🛒</Ico> Keranjang</h2>
+                  {heldCarts.length > 0 && (
+                    <button className="ka-held-badge" onClick={() => setShowHeldList(true)}>🅿️ Tertahan ({heldCarts.length})</button>
+                  )}
+                </div>
+                {cart.length > 0 && (
+                  <button className="ka-btn secondary" style={{ width: '100%', marginBottom: 12 }} onClick={holdCurrentCart}>
+                    🅿️ Tahan Transaksi Ini
+                  </button>
+                )}
                 {cart.length === 0 ? (
                   <div className="empty">Keranjang masih kosong.<br />Pilih produk di sebelah kiri untuk memulai transaksi.</div>
                 ) : (
@@ -1196,16 +1344,26 @@ function KasirApp() {
                         <th>Nama</th>
                         <th>Kategori</th>
                         <th>Harga</th>
+                        <th>HPP</th>
+                        <th>Untung/porsi</th>
                         <th>Stok</th>
                         <th></th>
                       </tr>
                     </thead>
                     <tbody>
-                      {products.map(p => (
+                      {products.map(p => {
+                        const hasRecipe = (p.recipe || []).length > 0;
+                        const hpp = computeHPP(p.recipe);
+                        const profit = p.price - hpp;
+                        return (
                         <tr key={p.id}>
                           <td style={{ fontWeight: 600 }}>{p.name}</td>
                           <td style={{ color: '#6B7268' }}>{p.category}</td>
                           <td className="price-cell">{formatRupiah(p.price)}</td>
+                          <td className="mono" style={{ color: 'var(--ink-soft)' }}>{hasRecipe ? formatRupiah(hpp) : '–'}</td>
+                          <td className="mono" style={{ fontWeight: 600, color: !hasRecipe ? 'var(--ink-soft)' : profit < 0 ? 'var(--danger)' : 'var(--accent)' }}>
+                            {hasRecipe ? `${formatRupiah(profit)} (${p.price > 0 ? Math.round((profit / p.price) * 100) : 0}%)` : '–'}
+                          </td>
                           <td>{p.stock}</td>
                           <td>
                             <div className="actions">
@@ -1214,7 +1372,8 @@ function KasirApp() {
                             </div>
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1549,6 +1708,31 @@ function KasirApp() {
               <label>Kategori</label>
               <input value={pForm.category} onChange={e => setPForm({ ...pForm, category: e.target.value })} placeholder="Contoh: Minuman" />
             </div>
+
+            <div className="ka-recipe-section">
+              <label>Resep per 1 porsi (opsional, buat hitung HPP)</label>
+              {(pForm.recipe || []).map((r, idx) => {
+                const item = expenseItems.find(it => it.id === r.expenseItemId);
+                return (
+                  <div className="ka-recipe-row" key={idx}>
+                    <select value={r.expenseItemId} onChange={e => updateRecipeRow(idx, { expenseItemId: e.target.value })}>
+                      {expenseItems.map(it => <option key={it.id} value={it.id}>{it.name}</option>)}
+                    </select>
+                    <input type="number" step="any" placeholder="jml" value={r.qty} onChange={e => updateRecipeRow(idx, { qty: e.target.value })} />
+                    <span className="unit">{item && item.unit ? item.unit : ''}</span>
+                    <button className="ka-icon-btn del" onClick={() => removeRecipeRow(idx)}><Ico size={13}>🗑️</Ico></button>
+                  </div>
+                );
+              })}
+              <button className="ka-btn ghost" style={{ paddingLeft: 0 }} onClick={addRecipeRow} disabled={expenseItems.length === 0}><Ico size={13}>➕</Ico> Tambah Bahan</button>
+              {(pForm.recipe || []).length > 0 && (
+                <div className="ka-row" style={{ marginTop: 6, fontWeight: 600 }}>
+                  <span>Estimasi HPP</span>
+                  <span className="mono">{formatRupiah(computeHPP(pForm.recipe))}</span>
+                </div>
+              )}
+            </div>
+
             <div className="ka-modal-actions">
               <button className="ka-btn secondary" onClick={closeProductModal}>Batal</button>
               <button className="ka-btn primary" onClick={submitProduct}>Simpan</button>
@@ -1630,6 +1814,39 @@ function KasirApp() {
         </div>
       )}
 
+      {showHeldList && (
+        <div className="ka-modal-overlay" onClick={() => setShowHeldList(false)}>
+          <div className="ka-modal" onClick={e => e.stopPropagation()}>
+            <h3>
+              Transaksi Tertahan
+              <button onClick={() => setShowHeldList(false)}><Ico size={18}>✖️</Ico></button>
+            </h3>
+            {heldCarts.length === 0 ? (
+              <p style={{ fontSize: 13, color: 'var(--ink-soft)' }}>Tidak ada transaksi yang ditahan.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {heldCarts.map(h => {
+                  const total = h.cart.reduce((s, c) => s + c.price * c.qty, 0);
+                  return (
+                    <div key={h.id} className="ka-trx-card" style={{ cursor: 'default' }}>
+                      <div className="ka-trx-head">
+                        <span className="id">{new Date(h.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} · {h.cart.length} item</span>
+                        <span className="total">{formatRupiah(total)}</span>
+                      </div>
+                      <div className="ka-trx-sub" style={{ marginBottom: 8 }}>{h.cart.map(c => c.name).join(', ')}</div>
+                      <div className="ka-trx-actions">
+                        <button className="ka-btn danger" onClick={() => deleteHeldCart(h.id)}><Ico size={13}>🗑️</Ico> Hapus</button>
+                        <button className="ka-btn primary" onClick={() => resumeHeldCart(h)}>Lanjutkan</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {showSettings && (
         <div className="ka-modal-overlay" onClick={() => setShowSettings(false)}>
           <div className="ka-modal" onClick={e => e.stopPropagation()}>
@@ -1661,7 +1878,7 @@ function KasirApp() {
               <div className="ka-modal-actions">
                 <button className="ka-btn secondary" onClick={exportAllData}><Ico size={14}>📤</Ico> Export Data</button>
                 <label className="ka-btn secondary" style={{ cursor: 'pointer', textAlign: 'center' }}>
-                  <Plus size={14} style={{ marginRight: 4 }} />Import Data
+                  <Ico size={14}>➕</Ico> Import Data
                   <input type="file" accept="application/json" onChange={importAllData} style={{ display: 'none' }} />
                 </label>
               </div>
@@ -1712,8 +1929,12 @@ function KasirApp() {
             <div className="ka-modal-actions" style={{ flexWrap: 'wrap' }}>
               <button className="ka-btn secondary" onClick={() => setShowReceipt(false)}>Tutup</button>
               <button className="ka-btn secondary" onClick={shareOrSaveReceipt}><Ico size={15}>📤</Ico> Bagikan/Simpan</button>
+              <button className="ka-btn secondary" onClick={printViaBluetooth} disabled={btPrinting}>
+                {btPrinting ? 'Menghubungkan…' : <><Ico size={15}>🖨️</Ico> Bluetooth</>}
+              </button>
               <button className="ka-btn primary" onClick={printReceipt}><Ico size={15}>🖨️</Ico> Cetak</button>
             </div>
+            <p style={{ fontSize: 10.5, color: 'var(--ink-soft)', marginTop: 8, marginBottom: 0 }}>Cetak Bluetooth hanya berfungsi di Chrome Android dengan printer thermal yang sudah di-pairing.</p>
           </div>
         </div>
       )}
