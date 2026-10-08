@@ -263,6 +263,16 @@ const STYLE = `
 
 /* --- Riwayat tab --- */
 .ka-summary-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 22px; }
+.ka-summary-row.four { grid-template-columns: repeat(4, 1fr); }
+.ka-card-selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-light); }
+.ka-split-line { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 13px; margin-top: 6px; }
+.ka-split-line .mono { font-weight: 600; color: var(--rust); }
+.ka-pay-split { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); font-size: 12.5px; }
+.ka-pay-split b { margin-left: 6px; color: var(--rust); }
+.ka-cell-sub { font-family: 'IBM Plex Sans', sans-serif; font-size: 10.5px; color: var(--ink-soft); margin-top: 2px; }
+.ka-table tr.ka-total-row td { font-weight: 700; background: var(--paper-light); border-top: 1px solid var(--border); }
+@media (max-width: 900px) { .ka-summary-row.four { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 560px) { .ka-summary-row.four { grid-template-columns: 1fr; } }
 .ka-insight-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-bottom: 22px; }
 .ka-insight-card { background: var(--accent-light); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; display: flex; align-items: center; gap: 12px; }
 .ka-insight-icon { font-size: 22px; }
@@ -429,6 +439,7 @@ function KasirApp() {
 
   // riwayat state
   const [expandedTrx, setExpandedTrx] = useState(null);
+  const [riwayatView, setRiwayatView] = useState('default'); // default | payments
   const [collapsedDates, setCollapsedDates] = useState({});
   const toggleDateGroup = (dateKey) => setCollapsedDates(prev => ({ ...prev, [dateKey]: !prev[dateKey] }));
 
@@ -660,8 +671,8 @@ function KasirApp() {
       // ---- sheet Harian / Mingguan / Bulanan ----
       const buildPeriodRows = (getKey, labelFn, withGrowth) => {
         const map = {};
-        const slot = (k) => (map[k] = map[k] || { trx: 0, items: 0, rev: 0, exp: 0 });
-        transactions.forEach(t => { const m = slot(getKey(t.timestamp)); m.trx += 1; m.items += sum(t.items, i => i.qty); m.rev += t.total; });
+        const slot = (k) => (map[k] = map[k] || { trx: 0, items: 0, rev: 0, exp: 0, cash: 0, qris: 0 });
+        transactions.forEach(t => { const m = slot(getKey(t.timestamp)); m.trx += 1; m.items += sum(t.items, i => i.qty); m.rev += t.total; if (t.paymentMethod === 'qris') m.qris += t.total; else m.cash += t.total; });
         expenseEntries.forEach(e => { slot(getKey(e.timestamp)).exp += e.total; });
         const keys = Object.keys(map).map(Number).sort((a, b) => a - b);
         const rows = keys.map((k, idx) => {
@@ -671,6 +682,8 @@ function KasirApp() {
             'Jumlah Transaksi': m.trx,
             'Item Terjual': m.items,
             'Pendapatan (Rp)': m.rev,
+            'Tunai (Rp)': m.cash,
+            'QRIS (Rp)': m.qris,
             'Pengeluaran (Rp)': m.exp,
             'Margin (Rp)': m.rev - m.exp,
             'Margin %': share(m.rev - m.exp, m.rev),
@@ -682,14 +695,16 @@ function KasirApp() {
           return row;
         });
         if (rows.length) {
-          const T = { trx: 0, items: 0, rev: 0, exp: 0 };
-          keys.forEach(k => { T.trx += map[k].trx; T.items += map[k].items; T.rev += map[k].rev; T.exp += map[k].exp; });
+          const T = { trx: 0, items: 0, rev: 0, exp: 0, cash: 0, qris: 0 };
+          keys.forEach(k => { T.trx += map[k].trx; T.items += map[k].items; T.rev += map[k].rev; T.exp += map[k].exp; T.cash += map[k].cash; T.qris += map[k].qris; });
           const totalRow = {};
           Object.keys(rows[0]).forEach(h => { totalRow[h] = ''; });
           totalRow[Object.keys(rows[0])[0]] = 'TOTAL';
           totalRow['Jumlah Transaksi'] = T.trx;
           totalRow['Item Terjual'] = T.items;
           totalRow['Pendapatan (Rp)'] = T.rev;
+          totalRow['Tunai (Rp)'] = T.cash;
+          totalRow['QRIS (Rp)'] = T.qris;
           totalRow['Pengeluaran (Rp)'] = T.exp;
           totalRow['Margin (Rp)'] = T.rev - T.exp;
           totalRow['Margin %'] = share(T.rev - T.exp, T.rev);
@@ -1219,6 +1234,8 @@ function KasirApp() {
   weekStart.setHours(0, 0, 0, 0);
   const todaysTransactions = transactions.filter(t => t.timestamp >= todayStart.getTime());
   const todaysRevenue = todaysTransactions.reduce((s, t) => s + t.total, 0);
+  const todaysQris = todaysTransactions.filter(t => t.paymentMethod === 'qris').reduce((s, t) => s + t.total, 0);
+  const todaysCash = todaysRevenue - todaysQris;
 
   const itemSalesSummary = useMemo(() => {
     const map = {};
@@ -1261,11 +1278,13 @@ function KasirApp() {
       const dateKey = d.toDateString();
       if (!current || current.dateKey !== dateKey) {
         const label = d.toLocaleDateString('id-ID', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
-        current = { dateKey, label, items: [], total: 0, itemMap: {} };
+        current = { dateKey, label, items: [], total: 0, itemMap: {}, cash: 0, qris: 0, cashCount: 0, qrisCount: 0 };
         groups.push(current);
       }
       current.items.push(t);
       current.total += t.total;
+      if (t.paymentMethod === 'qris') { current.qris += t.total; current.qrisCount += 1; }
+      else { current.cash += t.total; current.cashCount += 1; }
       t.items.forEach(it => {
         if (!current.itemMap[it.name]) current.itemMap[it.name] = { name: it.name, qty: 0, total: 0 };
         current.itemMap[it.name].qty += it.qty;
@@ -1761,7 +1780,7 @@ function KasirApp() {
                 <h2 style={{ fontSize: 16 }}>Ringkasan</h2>
                 <button className="ka-btn secondary" onClick={exportExcelReport}>📊 Export Excel</button>
               </div>
-              <div className="ka-summary-row">
+              <div className="ka-summary-row four">
                 <div className="ka-summary-card">
                   <div className="label"><Ico size={13}>📈</Ico> Transaksi Hari Ini</div>
                   <div className="value">{todaysTransactions.length}</div>
@@ -1774,8 +1793,52 @@ function KasirApp() {
                   <div className="label"><Ico size={13}>🧾</Ico> Total Semua Transaksi</div>
                   <div className="value">{transactions.length}</div>
                 </div>
+                <div
+                  className={`ka-summary-card ka-summary-card-clickable ${riwayatView === 'payments' ? 'ka-card-selected' : ''}`}
+                  onClick={() => setRiwayatView(riwayatView === 'payments' ? 'default' : 'payments')}
+                >
+                  <div className="label">💳 Tunai & QRIS · Hari Ini <span className="ka-card-arrow">›</span></div>
+                  <div className="ka-split-line"><span>💵 Tunai</span><span className="mono">{formatRupiah(todaysCash)}</span></div>
+                  <div className="ka-split-line"><span>📱 QRIS</span><span className="mono">{formatRupiah(todaysQris)}</span></div>
+                </div>
               </div>
 
+              {riwayatView === 'payments' && (
+                <div>
+                  <button className="ka-btn ghost" style={{ marginBottom: 14, paddingLeft: 0 }} onClick={() => setRiwayatView('default')}>← Kembali ke Riwayat</button>
+                  <h2 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 16, margin: '0 0 4px' }}>Tunai & QRIS per Hari</h2>
+                  <p style={{ color: 'var(--ink-soft)', fontSize: 12.5, margin: '0 0 14px' }}>Nominal pemasukan tiap hari, dipisah berdasarkan metode bayar.</p>
+                  {transactionsByDate.length === 0 ? (
+                    <div className="ka-empty-state"><Ico size={34}>🕘</Ico><p>Belum ada transaksi.</p></div>
+                  ) : (
+                    <div className="ka-table-wrap">
+                      <table className="ka-table">
+                        <thead>
+                          <tr><th>Tanggal</th><th>💵 Tunai</th><th>📱 QRIS</th><th>Total</th></tr>
+                        </thead>
+                        <tbody>
+                          {transactionsByDate.map(g => (
+                            <tr key={g.dateKey}>
+                              <td style={{ fontWeight: 600 }}>{g.label}</td>
+                              <td className="mono">{formatRupiah(g.cash)}<div className="ka-cell-sub">{g.cashCount} transaksi</div></td>
+                              <td className="mono">{formatRupiah(g.qris)}<div className="ka-cell-sub">{g.qrisCount} transaksi</div></td>
+                              <td className="price-cell">{formatRupiah(g.total)}</td>
+                            </tr>
+                          ))}
+                          <tr className="ka-total-row">
+                            <td>TOTAL</td>
+                            <td className="mono">{formatRupiah(transactionsByDate.reduce((s, g) => s + g.cash, 0))}</td>
+                            <td className="mono">{formatRupiah(transactionsByDate.reduce((s, g) => s + g.qris, 0))}</td>
+                            <td className="price-cell">{formatRupiah(transactionsByDate.reduce((s, g) => s + g.total, 0))}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {riwayatView === 'default' && <>
               {(topSellingAllTime || busiestHour) && (
                 <div className="ka-insight-row">
                   {topSellingAllTime && (
@@ -1848,6 +1911,10 @@ function KasirApp() {
                           <span className="t mono">{formatRupiah(it.total)}</span>
                         </div>
                       ))}
+                      <div className="ka-pay-split">
+                        <span>💵 Tunai <b className="mono">{formatRupiah(group.cash)}</b></span>
+                        <span>📱 QRIS <b className="mono">{formatRupiah(group.qris)}</b></span>
+                      </div>
                     </div>
                     <div className="ka-trx-list">
                       {group.items.map(t => (
@@ -1882,6 +1949,7 @@ function KasirApp() {
                   );
                 })
               )}
+              </>}
             </div>
           )}
 
