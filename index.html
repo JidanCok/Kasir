@@ -264,6 +264,29 @@ const STYLE = `
 /* --- Riwayat tab --- */
 .ka-summary-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 22px; }
 .ka-summary-row.four { grid-template-columns: repeat(4, 1fr); }
+.ka-backup-banner { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; background: var(--rust-light); border: 1px solid var(--rust); border-radius: 12px; padding: 12px 16px; margin-bottom: 16px; font-size: 12.5px; }
+.ka-backup-banner b { display: block; font-size: 13px; color: var(--rust); margin-bottom: 2px; }
+.ka-backup-banner span { color: var(--ink-soft); line-height: 1.4; }
+.ka-backup-banner-actions { display: flex; align-items: center; gap: 6px; }
+.ka-backup-section p.ka-backup-status { font-weight: 600; color: var(--ink); }
+.ka-emoji-icon { font-size: 19px; line-height: 1; }
+.ka-close-toolbar { display: flex; align-items: flex-end; gap: 18px; flex-wrap: wrap; margin-bottom: 16px; }
+.ka-close-toolbar .ka-field input { width: auto; min-width: 170px; }
+.ka-unclosed { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--ink-soft); }
+.ka-close-status { border-radius: 10px; padding: 10px 14px; font-size: 12.5px; margin-bottom: 16px; background: var(--accent-light); color: var(--accent-dark); }
+.ka-close-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+.ka-close-card { background: var(--paper-light); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+.ka-close-card h3 { font-family: 'Space Grotesk', sans-serif; font-size: 15px; margin: 0 0 12px; }
+.ka-row.sub { padding-left: 14px; color: var(--ink-soft); }
+.ka-close-top { font-size: 12px; color: var(--ink-soft); margin-top: 6px; line-height: 1.5; }
+.ka-close-qris { font-size: 12px; color: var(--ink-soft); margin-top: 12px; line-height: 1.5; }
+.ka-close-qris b { color: var(--rust); }
+.ka-diff { margin-top: 4px; padding: 10px 12px; border-radius: 10px; font-weight: 600; font-size: 13px; }
+.ka-diff.ok { background: var(--accent-light); color: var(--accent-dark); }
+.ka-diff.bad { background: var(--danger-light); color: var(--danger); }
+.ka-diff.more { background: var(--rust-light); color: var(--rust); }
+.ka-diff small { display: block; font-weight: 400; margin-top: 4px; line-height: 1.4; }
+@media (max-width: 760px) { .ka-close-grid { grid-template-columns: 1fr; } }
 .ka-card-selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-light); }
 .ka-split-line { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 13px; margin-top: 6px; }
 .ka-split-line .mono { font-weight: 600; color: var(--rust); }
@@ -353,6 +376,11 @@ function Ico({ size = 16, children }) {
 const formatRupiah = (n) => 'Rp' + Math.round(n || 0).toLocaleString('id-ID');
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
+const toDateInputValue = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const parseDateKey = (key) => { const [y, m, d] = key.split('-').map(Number); return new Date(y, m - 1, d); };
+const shortDateLabel = (key) => parseDateKey(key).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' });
+const longDateLabel = (key) => parseDateKey(key).toLocaleDateString('id-ID', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
+
 const getWeekKey = (ts) => {
   const d = new Date(ts);
   const day = d.getDay();
@@ -429,6 +457,10 @@ function KasirApp() {
   const [discountInput, setDiscountInput] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('tunai'); // tunai | qris
   const [heldCarts, setHeldCarts] = useState([]);
+  const [backupMeta, setBackupMeta] = useState({ lastBackupAt: null, snoozedUntil: null });
+  const [closings, setClosings] = useState([]);
+  const [closeDate, setCloseDate] = useState(toDateInputValue(new Date()));
+  const [closeForm, setCloseForm] = useState({ openingCash: '', cashOut: '', counted: '', note: '' });
   const [showHeldList, setShowHeldList] = useState(false);
   const [lastTransaction, setLastTransaction] = useState(null);
   const [showReceipt, setShowReceipt] = useState(false);
@@ -497,6 +529,16 @@ function KasirApp() {
         const hc = await window.storage.get('held-carts');
         if (hc && hc.value) loadedHeldCarts = JSON.parse(hc.value);
       } catch (e) { /* none yet */ }
+      let loadedBackupMeta = { lastBackupAt: null, snoozedUntil: null };
+      try {
+        const bm = await window.storage.get('backup-meta');
+        if (bm && bm.value) loadedBackupMeta = JSON.parse(bm.value);
+      } catch (e) { /* none yet */ }
+      let loadedClosings = [];
+      try {
+        const cl = await window.storage.get('closings');
+        if (cl && cl.value) loadedClosings = JSON.parse(cl.value);
+      } catch (e) { /* none yet */ }
       setProducts(loadedProducts);
       setTransactions(loadedTransactions);
       setStoreSettings(loadedSettings);
@@ -504,6 +546,8 @@ function KasirApp() {
       setExpenseItems(loadedExpenseItems);
       setExpenseEntries(loadedExpenseEntries);
       setHeldCarts(loadedHeldCarts);
+      setBackupMeta(loadedBackupMeta);
+      setClosings(loadedClosings);
       setReady(true);
       // persist seed if this was a first run
       try {
@@ -622,7 +666,7 @@ function KasirApp() {
       exportedAt: new Date().toISOString(),
       app: 'warung-kasir-backup',
       version: 1,
-      products, transactions, storeSettings, expenseItems, expenseEntries,
+      products, transactions, storeSettings, expenseItems, expenseEntries, closings,
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -632,6 +676,7 @@ function KasirApp() {
     a.download = `backup-kasir-${dateStr}.json`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+    markBackedUp();
   };
 
   const exportExcelReport = () => {
@@ -940,6 +985,24 @@ function KasirApp() {
       if (lowStock.length) add('Stok menipis (< 5)', lowStock.slice(0, 8).join(', '), null, 'Segera restock');
       if (totalRevenue > 0 && totalMargin / totalRevenue < 0.3) add('PERHATIAN: margin di bawah 30%', `${Math.round((totalMargin / totalRevenue) * 100)}%`, null, 'Tinjau harga jual atau biaya bahan terbesar');
 
+      const closeRows = [...closings].sort((a, b) => a.dateKey.localeCompare(b.dateKey)).map(c => ({
+        'Tanggal': excelDate(parseDateKey(c.dateKey).getTime()),
+        'Jumlah Transaksi': c.trxCount,
+        'Item Terjual': c.itemCount,
+        'Pendapatan (Rp)': c.revenue,
+        'Tunai (Rp)': c.cash,
+        'QRIS (Rp)': c.qris,
+        'Pengeluaran (Rp)': c.expense,
+        'Margin (Rp)': c.margin,
+        'Kas Awal (Rp)': c.openingCash,
+        'Uang Keluar Laci (Rp)': c.cashOut,
+        'Seharusnya di Laci (Rp)': c.expectedCash,
+        'Fisik di Laci (Rp)': c.counted,
+        'Selisih (Rp)': c.diff,
+        'Status': c.diff === 0 ? 'Pas' : c.diff < 0 ? 'Kurang' : 'Lebih',
+        'Catatan': c.note || '',
+      }));
+
       // ---- rakit workbook ----
       const finishSheet = (ws, filter) => {
         if (!ws['!ref']) return ws;
@@ -993,6 +1056,7 @@ function KasirApp() {
       addSheet('Transaksi', trxRows, true);
       addSheet('Detail Item', lineRows, true);
       addSheet('Pengeluaran', expRows, true);
+      addSheet('Tutup Kasir', closeRows, true);
       addSheet('Per Bahan', bahanRows, false);
 
       const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
@@ -1026,6 +1090,7 @@ function KasirApp() {
         if (data.storeSettings) await saveStoreSettings(data.storeSettings);
         if (data.expenseItems) await saveExpenseItems(data.expenseItems);
         if (data.expenseEntries) await saveExpenseEntries(data.expenseEntries);
+        if (data.closings) await saveClosings(data.closings);
         window.alert('Import berhasil.');
       } catch (err) {
         window.alert('Gagal import: file tidak valid.');
@@ -1114,6 +1179,25 @@ function KasirApp() {
   const cashValue = parseFloat(cashInput) || 0;
   const change = cashValue - finalTotal;
   const canCheckout = cart.length > 0 && (paymentMethod === 'qris' || cashValue >= finalTotal);
+
+  const saveBackupMeta = async (next) => {
+    setBackupMeta(next);
+    try {
+      const res = await window.storage.set('backup-meta', JSON.stringify(next));
+      if (!res) setSaveError(true);
+    } catch (e) { setSaveError(true); }
+  };
+
+  const markBackedUp = () => saveBackupMeta({ lastBackupAt: Date.now(), snoozedUntil: null });
+  const snoozeBackupReminder = () => saveBackupMeta({ ...backupMeta, snoozedUntil: Date.now() + 86400000 });
+
+  const saveClosings = async (next) => {
+    setClosings(next);
+    try {
+      const res = await window.storage.set('closings', JSON.stringify(next));
+      if (!res) setSaveError(true);
+    } catch (e) { setSaveError(true); }
+  };
 
   const saveHeldCarts = async (next) => {
     setHeldCarts(next);
@@ -1293,6 +1377,126 @@ function KasirApp() {
     });
     return groups.map(g => ({ ...g, itemBreakdown: Object.values(g.itemMap).sort((a, b) => b.qty - a.qty) }));
   }, [transactions]);
+
+  // ---- tutup kasir harian ----
+  const safeCloseDate = closeDate || toDateInputValue(new Date());
+
+  const closeDay = useMemo(() => {
+    const dayStart = parseDateKey(safeCloseDate);
+    const start = dayStart.getTime();
+    const end = new Date(dayStart.getFullYear(), dayStart.getMonth(), dayStart.getDate() + 1).getTime();
+    const trx = transactions.filter(t => t.timestamp >= start && t.timestamp < end);
+    const exp = expenseEntries.filter(e => e.timestamp >= start && e.timestamp < end);
+    let qris = 0, qrisCount = 0, cash = 0, cashCount = 0, discount = 0, itemCount = 0;
+    const itemMap = {};
+    trx.forEach(t => {
+      if (t.paymentMethod === 'qris') { qris += t.total; qrisCount += 1; } else { cash += t.total; cashCount += 1; }
+      discount += t.discountAmount || 0;
+      t.items.forEach(it => { itemCount += it.qty; itemMap[it.name] = (itemMap[it.name] || 0) + it.qty; });
+    });
+    const revenue = cash + qris;
+    const expense = exp.reduce((sum, e) => sum + e.total, 0);
+    const topItems = Object.entries(itemMap).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([name, qty]) => ({ name, qty }));
+    return { trxCount: trx.length, itemCount, revenue, cash, cashCount, qris, qrisCount, discount, expense, margin: revenue - expense, topItems };
+  }, [transactions, expenseEntries, safeCloseDate]);
+
+  const unclosedDays = useMemo(() => {
+    const days = {};
+    transactions.forEach(t => { days[toDateInputValue(new Date(t.timestamp))] = true; });
+    const today = toDateInputValue(new Date());
+    return Object.keys(days).filter(k => k < today && !closings.some(c => c.dateKey === k)).sort().reverse().slice(0, 7);
+  }, [transactions, closings]);
+
+  const firstDataTs = useMemo(() => {
+    let first = null;
+    transactions.forEach(t => { if (first === null || t.timestamp < first) first = t.timestamp; });
+    expenseEntries.forEach(e => { if (first === null || e.timestamp < first) first = e.timestamp; });
+    return first;
+  }, [transactions, expenseEntries]);
+
+  // isi form otomatis: kalau tanggal ini sudah pernah ditutup, tampilkan isinya; kalau belum, kas awal ikut penutupan sebelumnya
+  useEffect(() => {
+    const existing = closings.find(c => c.dateKey === safeCloseDate);
+    if (existing) {
+      setCloseForm({ openingCash: String(existing.openingCash), cashOut: String(existing.cashOut), counted: String(existing.counted), note: existing.note || '' });
+    } else {
+      const prev = closings.find(c => c.dateKey < safeCloseDate);
+      setCloseForm({ openingCash: prev ? String(prev.openingCash) : '', cashOut: '', counted: '', note: '' });
+    }
+  }, [safeCloseDate, closings]);
+
+  const existingClosing = closings.find(c => c.dateKey === safeCloseDate) || null;
+  const closeDayLabel = longDateLabel(safeCloseDate);
+  const openingCashNum = parseFloat(closeForm.openingCash) || 0;
+  const cashOutNum = parseFloat(closeForm.cashOut) || 0;
+  const countedNum = parseFloat(closeForm.counted) || 0;
+  const expectedCash = Math.round(openingCashNum + closeDay.cash - cashOutNum);
+  const cashDiff = Math.round(countedNum - expectedCash);
+  const diffText = cashDiff === 0 ? 'Pas, tidak ada selisih' : cashDiff < 0 ? `Kurang ${formatRupiah(-cashDiff)}` : `Lebih ${formatRupiah(cashDiff)}`;
+
+  const saveClosing = async () => {
+    if (closeForm.counted === '') { window.alert('Isi dulu uang fisik di laci (hasil hitung).'); return; }
+    if (existingClosing && !window.confirm('Tanggal ini sudah pernah ditutup. Perbarui dengan angka sekarang?')) return;
+    const record = {
+      id: existingClosing ? existingClosing.id : uid(),
+      dateKey: safeCloseDate,
+      closedAt: Date.now(),
+      trxCount: closeDay.trxCount, itemCount: closeDay.itemCount,
+      revenue: closeDay.revenue, cash: closeDay.cash, qris: closeDay.qris,
+      expense: closeDay.expense, margin: closeDay.margin,
+      openingCash: openingCashNum, cashOut: cashOutNum, expectedCash, counted: countedNum, diff: cashDiff,
+      note: closeForm.note.trim(),
+    };
+    const next = [record, ...closings.filter(c => c.dateKey !== safeCloseDate)].sort((a, b) => b.dateKey.localeCompare(a.dateKey));
+    await saveClosings(next);
+  };
+
+  const deleteClosing = async (c) => {
+    if (!window.confirm(`Hapus catatan tutup kasir ${longDateLabel(c.dateKey)}?`)) return;
+    await saveClosings(closings.filter(x => x.id !== c.id));
+  };
+
+  const buildClosingText = () => {
+    const lines = [];
+    lines.push(`📋 TUTUP KASIR — ${storeSettings.name || 'Toko Saya'}`);
+    lines.push(closeDayLabel);
+    lines.push('');
+    lines.push(`Transaksi: ${closeDay.trxCount} | Item terjual: ${closeDay.itemCount}`);
+    lines.push(`Pendapatan: ${formatRupiah(closeDay.revenue)}`);
+    lines.push(`  💵 Tunai: ${formatRupiah(closeDay.cash)} (${closeDay.cashCount} trx)`);
+    lines.push(`  📱 QRIS: ${formatRupiah(closeDay.qris)} (${closeDay.qrisCount} trx)`);
+    if (closeDay.discount > 0) lines.push(`Diskon diberikan: ${formatRupiah(closeDay.discount)}`);
+    lines.push(`Pengeluaran: ${formatRupiah(closeDay.expense)}`);
+    lines.push(`Margin: ${formatRupiah(closeDay.margin)}`);
+    if (closeDay.topItems.length > 0) {
+      lines.push('');
+      lines.push('Terlaris: ' + closeDay.topItems.map(i => `${i.name} (${i.qty})`).join(', '));
+    }
+    if (closeForm.counted !== '') {
+      lines.push('');
+      lines.push(`Kas laci: awal ${formatRupiah(openingCashNum)}, keluar ${formatRupiah(cashOutNum)}`);
+      lines.push(`Seharusnya ${formatRupiah(expectedCash)}, fisik ${formatRupiah(countedNum)}`);
+      lines.push(`Selisih: ${diffText}`);
+    }
+    if (closeForm.note.trim()) lines.push(`Catatan: ${closeForm.note.trim()}`);
+    return lines.join('\n');
+  };
+
+  const shareClosingSummary = async () => {
+    const text = buildClosingText();
+    if (navigator.share) {
+      try { await navigator.share({ text }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+    window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
+  };
+
+  // ---- pengingat backup ----
+  const DAY_MS = 86400000;
+  const backupBaselineTs = backupMeta.lastBackupAt || firstDataTs;
+  const backupThresholdDays = backupMeta.lastBackupAt ? 7 : 2;
+  const backupSnoozed = !!backupMeta.snoozedUntil && backupMeta.snoozedUntil > Date.now();
+  const showBackupReminder = ready && !!backupBaselineTs && (Date.now() - backupBaselineTs) > backupThresholdDays * DAY_MS && !backupSnoozed;
+  const daysSinceBackup = backupMeta.lastBackupAt ? Math.floor((Date.now() - backupMeta.lastBackupAt) / DAY_MS) : null;
 
   // ---- modal/pengeluaran logic ----
   const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
@@ -1556,6 +1760,9 @@ function KasirApp() {
         <button className={`ka-tab ${activeTab === 'riwayat' ? 'active' : ''}`} onClick={() => setActiveTab('riwayat')}>
           <Ico size={19}>🕘</Ico> Riwayat
         </button>
+        <button className={`ka-tab ${activeTab === 'tutup' ? 'active' : ''}`} onClick={() => setActiveTab('tutup')}>
+          <span className="ka-emoji-icon">🧮</span> Tutup
+        </button>
         <div className="ka-sidebar-divider" />
         <button className={`ka-tab ${activeTab === 'modal' ? 'active' : ''}`} onClick={() => setActiveTab('modal')}>
           <Ico size={19}>📉</Ico> Modal
@@ -1572,12 +1779,14 @@ function KasirApp() {
             {activeTab === 'produk' && 'Produk'}
             {activeTab === 'riwayat' && 'Riwayat Transaksi'}
             {activeTab === 'modal' && 'Modal & Pengeluaran'}
+            {activeTab === 'tutup' && 'Tutup Kasir'}
           </h1>
           <p>
             {activeTab === 'kasir' && 'Pilih produk untuk menambahkan ke keranjang'}
             {activeTab === 'produk' && 'Kelola daftar produk dan stok barang'}
             {activeTab === 'riwayat' && 'Rekap penjualan dan riwayat transaksi'}
             {activeTab === 'modal' && 'Catat & pantau pengeluaran bahan baku dan operasional toko'}
+            {activeTab === 'tutup' && 'Hitung uang di laci dan rekap penjualan harian'}
           </p>
         </div>
 
@@ -1585,6 +1794,19 @@ function KasirApp() {
           {saveError && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#F5E1DD', color: '#A23B2E', padding: '10px 14px', borderRadius: 8, fontSize: 12.5, marginBottom: 16 }}>
               <Ico size={15}>⚠️</Ico> Sebagian data mungkin tidak tersimpan. Coba periksa koneksi penyimpanan Anda.
+            </div>
+          )}
+
+          {showBackupReminder && (
+            <div className="ka-backup-banner">
+              <div>
+                <b>{backupMeta.lastBackupAt ? `💾 Terakhir backup ${daysSinceBackup} hari lalu` : '💾 Data kamu belum pernah dibackup'}</b>
+                <span>Data cuma tersimpan di HP ini. Kalau HP rusak atau data Chrome terhapus, riwayat dan pengaturan bisa hilang.</span>
+              </div>
+              <div className="ka-backup-banner-actions">
+                <button className="ka-btn primary" style={{ width: 'auto' }} onClick={exportAllData}>Backup Sekarang</button>
+                <button className="ka-btn ghost" onClick={snoozeBackupReminder}>Besok saja</button>
+              </div>
             </div>
           )}
 
@@ -1950,6 +2172,127 @@ function KasirApp() {
                 })
               )}
               </>}
+            </div>
+          )}
+
+          {activeTab === 'tutup' && (
+            <div>
+              <div className="ka-close-toolbar">
+                <div className="ka-field" style={{ marginBottom: 0 }}>
+                  <label>Tanggal yang ditutup</label>
+                  <input type="date" value={closeDate} max={toDateInputValue(new Date())} onChange={e => setCloseDate(e.target.value)} />
+                </div>
+                {unclosedDays.length > 0 && (
+                  <div className="ka-unclosed">
+                    <span>Belum ditutup:</span>
+                    {unclosedDays.map(k => (
+                      <button key={k} className="ka-chip" onClick={() => setCloseDate(k)}>{shortDateLabel(k)}</button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {existingClosing && (
+                <div className="ka-close-status">
+                  ✅ Sudah ditutup {formatDateTime(existingClosing.closedAt)}
+                  {Math.round(existingClosing.revenue) !== Math.round(closeDay.revenue) && <b> — data transaksi berubah sejak ditutup, simpan ulang untuk memperbarui.</b>}
+                </div>
+              )}
+
+              <div className="ka-close-grid">
+                <div className="ka-close-card">
+                  <h3>Rekap {closeDayLabel}</h3>
+                  {closeDay.trxCount === 0 && closeDay.expense === 0 && (
+                    <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '0 0 10px' }}>Belum ada transaksi atau pengeluaran di tanggal ini.</p>
+                  )}
+                  <div className="ka-row"><span>Transaksi</span><span className="mono">{closeDay.trxCount}</span></div>
+                  <div className="ka-row"><span>Item terjual</span><span className="mono">{closeDay.itemCount} pcs</span></div>
+                  <div className="ka-row total"><span>Pendapatan</span><span>{formatRupiah(closeDay.revenue)}</span></div>
+                  <div className="ka-row sub"><span>💵 Tunai ({closeDay.cashCount})</span><span className="mono">{formatRupiah(closeDay.cash)}</span></div>
+                  <div className="ka-row sub"><span>📱 QRIS ({closeDay.qrisCount})</span><span className="mono">{formatRupiah(closeDay.qris)}</span></div>
+                  {closeDay.discount > 0 && (
+                    <div className="ka-row"><span>Diskon diberikan</span><span className="mono">{formatRupiah(closeDay.discount)}</span></div>
+                  )}
+                  <div className="ka-row"><span>Pengeluaran (tab Modal)</span><span className="mono">{formatRupiah(closeDay.expense)}</span></div>
+                  <div className="ka-row total">
+                    <span>Margin</span>
+                    <span style={{ color: closeDay.margin < 0 ? 'var(--danger)' : 'var(--accent)' }}>{formatRupiah(closeDay.margin)}</span>
+                  </div>
+                  {closeDay.topItems.length > 0 && (
+                    <div className="ka-close-top">Terlaris: {closeDay.topItems.map(i => `${i.name} (${i.qty})`).join(', ')}</div>
+                  )}
+                </div>
+
+                <div className="ka-close-card">
+                  <h3>Hitung Uang di Laci</h3>
+                  <div className="ka-field">
+                    <label>Kas awal laci (Rp)</label>
+                    <input type="number" value={closeForm.openingCash} onChange={e => setCloseForm({ ...closeForm, openingCash: e.target.value })} placeholder="0" />
+                  </div>
+                  <div className="ka-row"><span>+ Penjualan tunai</span><span className="mono">{formatRupiah(closeDay.cash)}</span></div>
+                  <div className="ka-field">
+                    <label>− Uang keluar dari laci: belanja dll (Rp)</label>
+                    <input type="number" value={closeForm.cashOut} onChange={e => setCloseForm({ ...closeForm, cashOut: e.target.value })} placeholder="0" />
+                    {closeDay.expense > 0 && (
+                      <button className="ka-btn ghost" style={{ paddingLeft: 0 }} onClick={() => setCloseForm(f => ({ ...f, cashOut: String(Math.round(closeDay.expense)) }))}>
+                        Isi dengan pengeluaran hari ini ({formatRupiah(closeDay.expense)})
+                      </button>
+                    )}
+                  </div>
+                  <div className="ka-row total"><span>Seharusnya ada di laci</span><span>{formatRupiah(expectedCash)}</span></div>
+                  <div className="ka-field">
+                    <label>Uang fisik di laci, hasil hitung (Rp)</label>
+                    <input type="number" value={closeForm.counted} onChange={e => setCloseForm({ ...closeForm, counted: e.target.value })} placeholder="Hitung uangnya, lalu isi di sini" />
+                  </div>
+                  {closeForm.counted !== '' && (
+                    <div className={`ka-diff ${cashDiff === 0 ? 'ok' : cashDiff < 0 ? 'bad' : 'more'}`}>
+                      {cashDiff === 0 ? '✅ ' : cashDiff < 0 ? '⚠️ ' : 'ℹ️ '}{diffText}
+                      {cashDiff !== 0 && <small>Cek: ada transaksi yang belum dicatat, kembalian yang salah, atau belanja yang belum diisi di "uang keluar".</small>}
+                    </div>
+                  )}
+                  <div className="ka-close-qris">📱 QRIS yang seharusnya masuk rekening: <b className="mono">{formatRupiah(closeDay.qris)}</b>. Cocokkan dengan mutasi rekening.</div>
+                </div>
+              </div>
+
+              <div className="ka-field" style={{ marginTop: 16 }}>
+                <label>Catatan (opsional)</label>
+                <input value={closeForm.note} onChange={e => setCloseForm({ ...closeForm, note: e.target.value })} placeholder="Contoh: ada kembalian salah, uang diambil buat belanja" />
+              </div>
+              <div className="ka-modal-actions" style={{ flexWrap: 'wrap' }}>
+                <button className="ka-btn primary" onClick={saveClosing}>💾 {existingClosing ? 'Perbarui' : 'Simpan'} Tutup Kasir</button>
+                <button className="ka-btn secondary" onClick={shareClosingSummary}>📤 Kirim Ringkasan</button>
+              </div>
+
+              {closings.length > 0 && (
+                <div style={{ marginTop: 28 }}>
+                  <h2 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 16, margin: '0 0 10px' }}>Riwayat Tutup Kasir</h2>
+                  <div className="ka-table-wrap">
+                    <table className="ka-table">
+                      <thead>
+                        <tr><th>Tanggal</th><th>Pendapatan</th><th>💵 Tunai</th><th>📱 QRIS</th><th>Selisih Laci</th><th></th></tr>
+                      </thead>
+                      <tbody>
+                        {closings.map(c => (
+                          <tr key={c.id} style={{ cursor: 'pointer' }} onClick={() => setCloseDate(c.dateKey)}>
+                            <td style={{ fontWeight: 600 }}>{longDateLabel(c.dateKey)}</td>
+                            <td className="price-cell">{formatRupiah(c.revenue)}</td>
+                            <td className="mono">{formatRupiah(c.cash)}</td>
+                            <td className="mono">{formatRupiah(c.qris)}</td>
+                            <td className="mono" style={{ fontWeight: 600, color: c.diff === 0 ? 'var(--accent)' : c.diff < 0 ? 'var(--danger)' : 'var(--rust)' }}>
+                              {c.diff === 0 ? '✅ Pas' : c.diff < 0 ? `Kurang ${formatRupiah(-c.diff)}` : `Lebih ${formatRupiah(c.diff)}`}
+                            </td>
+                            <td>
+                              <div className="actions">
+                                <button className="ka-icon-btn del" onClick={(e) => { e.stopPropagation(); deleteClosing(c); }}><Ico size={13}>🗑️</Ico></button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -2326,6 +2669,7 @@ function KasirApp() {
               </div>
               <label style={{ marginTop: 18 }}>Backup Data (untuk memulihkan)</label>
               <p>File JSON ini bukan buat dibaca di Excel. Fungsinya cuma buat memulihkan semua data kalau HP ganti atau aplikasi terhapus.</p>
+              <p className="ka-backup-status">{backupMeta.lastBackupAt ? `Terakhir backup: ${formatDateTime(backupMeta.lastBackupAt)} (${daysSinceBackup} hari lalu)` : 'Belum pernah backup.'}</p>
               <div className="ka-modal-actions">
                 <button className="ka-btn secondary" onClick={exportAllData}><Ico size={14}>📤</Ico> Backup JSON</button>
                 <label className="ka-btn secondary" style={{ cursor: 'pointer', textAlign: 'center' }}>
