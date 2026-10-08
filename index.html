@@ -223,7 +223,7 @@ const STYLE = `
 /* --- Produk tab --- */
 .ka-produk-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
 .ka-produk-head h2 { font-family: 'Space Grotesk', sans-serif; font-size: 18px; margin: 0; }
-.ka-table-wrap { background: #fff; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.ka-table-wrap { background: #fff; border: 1px solid var(--border); border-radius: 12px; overflow-x: auto; }
 .ka-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .ka-table th { text-align: left; padding: 12px 16px; background: var(--paper-light); color: var(--ink-soft); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em; border-bottom: 1px solid var(--border); }
 .ka-table td { padding: 12px 16px; border-bottom: 1px solid var(--border); vertical-align: middle; }
@@ -278,9 +278,12 @@ const STYLE = `
 .ka-close-card { background: var(--paper-light); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
 .ka-close-card h3 { font-family: 'Space Grotesk', sans-serif; font-size: 15px; margin: 0 0 12px; }
 .ka-row.sub { padding-left: 14px; color: var(--ink-soft); }
+.ka-formula { font-size: 12px; color: var(--ink-soft); margin: -4px 0 14px; line-height: 1.5; }
+.ka-auto-row { background: var(--accent-light); border-radius: 8px; padding: 8px 10px; margin-bottom: 14px; gap: 10px; }
+.ka-auto-row em { font-style: normal; font-size: 11px; color: var(--ink-soft); }
 .ka-close-top { font-size: 12px; color: var(--ink-soft); margin-top: 6px; line-height: 1.5; }
-.ka-close-qris { font-size: 12px; color: var(--ink-soft); margin-top: 12px; line-height: 1.5; }
-.ka-close-qris b { color: var(--rust); }
+.ka-close-sep { border-top: 1px dashed var(--border); margin: 18px 0 14px; }
+.ka-close-card h4 { font-family: 'Space Grotesk', sans-serif; font-size: 14px; margin: 0 0 8px; }
 .ka-diff { margin-top: 4px; padding: 10px 12px; border-radius: 10px; font-weight: 600; font-size: 13px; }
 .ka-diff.ok { background: var(--accent-light); color: var(--accent-dark); }
 .ka-diff.bad { background: var(--danger-light); color: var(--danger); }
@@ -379,6 +382,7 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 const toDateInputValue = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const parseDateKey = (key) => { const [y, m, d] = key.split('-').map(Number); return new Date(y, m - 1, d); };
 const shortDateLabel = (key) => parseDateKey(key).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' });
+const mediumDateLabel = (key) => parseDateKey(key).toLocaleDateString('id-ID', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
 const longDateLabel = (key) => parseDateKey(key).toLocaleDateString('id-ID', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
 
 const getWeekKey = (ts) => {
@@ -460,7 +464,7 @@ function KasirApp() {
   const [backupMeta, setBackupMeta] = useState({ lastBackupAt: null, snoozedUntil: null });
   const [closings, setClosings] = useState([]);
   const [closeDate, setCloseDate] = useState(toDateInputValue(new Date()));
-  const [closeForm, setCloseForm] = useState({ openingCash: '', cashOut: '', counted: '', note: '' });
+  const [closeForm, setCloseForm] = useState({ openingCash: '', cashOut: '', counted: '', qrisReceived: '', note: '' });
   const [showHeldList, setShowHeldList] = useState(false);
   const [lastTransaction, setLastTransaction] = useState(null);
   const [showReceipt, setShowReceipt] = useState(false);
@@ -998,8 +1002,11 @@ function KasirApp() {
         'Uang Keluar Laci (Rp)': c.cashOut,
         'Seharusnya di Laci (Rp)': c.expectedCash,
         'Fisik di Laci (Rp)': c.counted,
-        'Selisih (Rp)': c.diff,
-        'Status': c.diff === 0 ? 'Pas' : c.diff < 0 ? 'Kurang' : 'Lebih',
+        'Selisih Laci (Rp)': c.diff,
+        'Status Laci': c.diff === 0 ? 'Pas' : c.diff < 0 ? 'Kurang' : 'Lebih',
+        'QRIS Masuk Rekening (Rp)': c.qrisReceived == null ? '' : c.qrisReceived,
+        'Selisih QRIS (Rp)': c.qrisDiff == null ? '' : c.qrisDiff,
+        'Status QRIS': c.qrisDiff == null ? 'Belum dicek' : c.qrisDiff === 0 ? 'Pas' : c.qrisDiff < 0 ? 'Kurang' : 'Lebih',
         'Catatan': c.note || '',
       }));
 
@@ -1418,10 +1425,10 @@ function KasirApp() {
   useEffect(() => {
     const existing = closings.find(c => c.dateKey === safeCloseDate);
     if (existing) {
-      setCloseForm({ openingCash: String(existing.openingCash), cashOut: String(existing.cashOut), counted: String(existing.counted), note: existing.note || '' });
+      setCloseForm({ openingCash: String(existing.openingCash), cashOut: String(existing.cashOut), counted: String(existing.counted), qrisReceived: existing.qrisReceived == null ? '' : String(existing.qrisReceived), note: existing.note || '' });
     } else {
       const prev = closings.find(c => c.dateKey < safeCloseDate);
-      setCloseForm({ openingCash: prev ? String(prev.openingCash) : '', cashOut: '', counted: '', note: '' });
+      setCloseForm({ openingCash: prev ? String(prev.openingCash) : '', cashOut: '', counted: '', qrisReceived: '', note: '' });
     }
   }, [safeCloseDate, closings]);
 
@@ -1433,6 +1440,12 @@ function KasirApp() {
   const expectedCash = Math.round(openingCashNum + closeDay.cash - cashOutNum);
   const cashDiff = Math.round(countedNum - expectedCash);
   const diffText = cashDiff === 0 ? 'Pas, tidak ada selisih' : cashDiff < 0 ? `Kurang ${formatRupiah(-cashDiff)}` : `Lebih ${formatRupiah(cashDiff)}`;
+  const qrisRaw = closeForm.qrisReceived == null ? '' : String(closeForm.qrisReceived);
+  const qrisChecked = qrisRaw !== '';
+  const qrisReceivedNum = parseFloat(qrisRaw) || 0;
+  const expectedQris = Math.round(closeDay.qris);
+  const qrisDiff = Math.round(qrisReceivedNum - expectedQris);
+  const qrisDiffText = qrisDiff === 0 ? 'Pas, tidak ada selisih' : qrisDiff < 0 ? `Kurang ${formatRupiah(-qrisDiff)}` : `Lebih ${formatRupiah(qrisDiff)}`;
 
   const saveClosing = async () => {
     if (closeForm.counted === '') { window.alert('Isi dulu uang fisik di laci (hasil hitung).'); return; }
@@ -1445,6 +1458,7 @@ function KasirApp() {
       revenue: closeDay.revenue, cash: closeDay.cash, qris: closeDay.qris,
       expense: closeDay.expense, margin: closeDay.margin,
       openingCash: openingCashNum, cashOut: cashOutNum, expectedCash, counted: countedNum, diff: cashDiff,
+      expectedQris, qrisReceived: qrisChecked ? qrisReceivedNum : null, qrisDiff: qrisChecked ? qrisDiff : null,
       note: closeForm.note.trim(),
     };
     const next = [record, ...closings.filter(c => c.dateKey !== safeCloseDate)].sort((a, b) => b.dateKey.localeCompare(a.dateKey));
@@ -1477,6 +1491,14 @@ function KasirApp() {
       lines.push(`Kas laci: awal ${formatRupiah(openingCashNum)}, keluar ${formatRupiah(cashOutNum)}`);
       lines.push(`Seharusnya ${formatRupiah(expectedCash)}, fisik ${formatRupiah(countedNum)}`);
       lines.push(`Selisih: ${diffText}`);
+    }
+    if (qrisChecked) {
+      lines.push('');
+      lines.push(`QRIS: seharusnya ${formatRupiah(expectedQris)}, masuk rekening ${formatRupiah(qrisReceivedNum)}`);
+      lines.push(`Selisih QRIS: ${qrisDiffText}`);
+    } else if (closeDay.qris > 0) {
+      lines.push('');
+      lines.push(`QRIS ${formatRupiah(closeDay.qris)} belum dicocokkan dengan mutasi rekening`);
     }
     if (closeForm.note.trim()) lines.push(`Catatan: ${closeForm.note.trim()}`);
     return lines.join('\n');
@@ -2225,13 +2247,14 @@ function KasirApp() {
 
                 <div className="ka-close-card">
                   <h3>Hitung Uang di Laci</h3>
+                  <p className="ka-formula">Seharusnya ada di laci = kas awal + penjualan tunai − uang keluar</p>
                   <div className="ka-field">
-                    <label>Kas awal laci (Rp)</label>
+                    <label>Kas awal laci: uang yang sudah ada sebelum jualan (Rp)</label>
                     <input type="number" value={closeForm.openingCash} onChange={e => setCloseForm({ ...closeForm, openingCash: e.target.value })} placeholder="0" />
                   </div>
-                  <div className="ka-row"><span>+ Penjualan tunai</span><span className="mono">{formatRupiah(closeDay.cash)}</span></div>
+                  <div className="ka-row ka-auto-row"><span>Ditambah penjualan tunai hari ini <em>(otomatis dari transaksi)</em></span><span className="mono">{formatRupiah(closeDay.cash)}</span></div>
                   <div className="ka-field">
-                    <label>− Uang keluar dari laci: belanja dll (Rp)</label>
+                    <label>Dikurangi uang keluar dari laci: belanja dll (Rp)</label>
                     <input type="number" value={closeForm.cashOut} onChange={e => setCloseForm({ ...closeForm, cashOut: e.target.value })} placeholder="0" />
                     {closeDay.expense > 0 && (
                       <button className="ka-btn ghost" style={{ paddingLeft: 0 }} onClick={() => setCloseForm(f => ({ ...f, cashOut: String(Math.round(closeDay.expense)) }))}>
@@ -2250,7 +2273,23 @@ function KasirApp() {
                       {cashDiff !== 0 && <small>Cek: ada transaksi yang belum dicatat, kembalian yang salah, atau belanja yang belum diisi di "uang keluar".</small>}
                     </div>
                   )}
-                  <div className="ka-close-qris">📱 QRIS yang seharusnya masuk rekening: <b className="mono">{formatRupiah(closeDay.qris)}</b>. Cocokkan dengan mutasi rekening.</div>
+                  <div className="ka-close-sep" />
+                  <h4>Cocokkan QRIS</h4>
+                  <p className="ka-formula">Selisih = QRIS yang masuk di rekening − QRIS menurut aplikasi</p>
+                  <div className="ka-row ka-auto-row"><span>QRIS seharusnya masuk rekening <em>(otomatis dari transaksi)</em></span><span className="mono">{formatRupiah(closeDay.qris)}</span></div>
+                  <div className="ka-field">
+                    <label>QRIS yang masuk di rekening / mutasi, hasil cek (Rp)</label>
+                    <input type="number" value={closeForm.qrisReceived == null ? '' : closeForm.qrisReceived} onChange={e => setCloseForm({ ...closeForm, qrisReceived: e.target.value })} placeholder="Cek mutasi rekening, lalu isi di sini" />
+                  </div>
+                  {qrisChecked && (
+                    <div className={`ka-diff ${qrisDiff === 0 ? 'ok' : qrisDiff < 0 ? 'bad' : 'more'}`}>
+                      {qrisDiff === 0 ? '✅ ' : qrisDiff < 0 ? '⚠️ ' : 'ℹ️ '}{qrisDiffText}
+                      {qrisDiff !== 0 && <small>Selisih kecil biasanya potongan biaya QRIS dari penyedia pembayaran. Kalau besar, cek transaksi QRIS yang belum masuk rekening atau yang salah dicatat.</small>}
+                    </div>
+                  )}
+                  {!qrisChecked && closeDay.qris > 0 && (
+                    <div className="ka-close-top">Belum dicocokkan. Boleh dikosongkan kalau mutasi belum bisa dicek.</div>
+                  )}
                 </div>
               </div>
 
@@ -2269,17 +2308,20 @@ function KasirApp() {
                   <div className="ka-table-wrap">
                     <table className="ka-table">
                       <thead>
-                        <tr><th>Tanggal</th><th>Pendapatan</th><th>💵 Tunai</th><th>📱 QRIS</th><th>Selisih Laci</th><th></th></tr>
+                        <tr><th>Tanggal</th><th>Pendapatan</th><th>💵 Tunai</th><th>📱 QRIS</th><th>Selisih Laci</th><th>Selisih QRIS</th><th></th></tr>
                       </thead>
                       <tbody>
                         {closings.map(c => (
                           <tr key={c.id} style={{ cursor: 'pointer' }} onClick={() => setCloseDate(c.dateKey)}>
-                            <td style={{ fontWeight: 600 }}>{longDateLabel(c.dateKey)}</td>
+                            <td style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{mediumDateLabel(c.dateKey)}</td>
                             <td className="price-cell">{formatRupiah(c.revenue)}</td>
                             <td className="mono">{formatRupiah(c.cash)}</td>
                             <td className="mono">{formatRupiah(c.qris)}</td>
                             <td className="mono" style={{ fontWeight: 600, color: c.diff === 0 ? 'var(--accent)' : c.diff < 0 ? 'var(--danger)' : 'var(--rust)' }}>
                               {c.diff === 0 ? '✅ Pas' : c.diff < 0 ? `Kurang ${formatRupiah(-c.diff)}` : `Lebih ${formatRupiah(c.diff)}`}
+                            </td>
+                            <td className="mono" style={{ fontWeight: 600, whiteSpace: 'nowrap', color: c.qrisDiff == null ? 'var(--ink-soft)' : c.qrisDiff === 0 ? 'var(--accent)' : c.qrisDiff < 0 ? 'var(--danger)' : 'var(--rust)' }}>
+                              {c.qrisDiff == null ? 'Belum dicek' : c.qrisDiff === 0 ? '✅ Pas' : c.qrisDiff < 0 ? `Kurang ${formatRupiah(-c.qrisDiff)}` : `Lebih ${formatRupiah(c.qrisDiff)}`}
                             </td>
                             <td>
                               <div className="actions">
