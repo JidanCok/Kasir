@@ -15,6 +15,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root { box-sizing: border-box; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
   html { scroll-padding-top: env(safe-area-inset-top, 0px); height: 100%; }
@@ -619,7 +620,380 @@ function KasirApp() {
     a.href = url;
     a.download = `backup-kasir-${dateStr}.json`;
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const exportExcelReport = () => {
+    if (typeof XLSX === 'undefined') {
+      window.alert('Library Excel belum termuat. Buka aplikasi dengan internet sekali, lalu coba lagi.');
+      return;
+    }
+    if (transactions.length === 0 && expenseEntries.length === 0) {
+      window.alert('Belum ada data transaksi atau pengeluaran untuk diexport.');
+      return;
+    }
+    try {
+      const DAY = 86400000;
+      const sum = (arr, f) => arr.reduce((s, x) => s + f(x), 0);
+      const share = (a, b) => (b > 0 ? a / b : '');
+      const pctText = (a, b) => (b > 0 ? `${Math.round((a / b) * 100)}% dari total` : '');
+      const fmtRp = (n) => 'Rp' + Math.round(n || 0).toLocaleString('id-ID');
+      const excelDate = (ts) => {
+        const d = new Date(ts);
+        return Math.floor((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(1899, 11, 30)) / DAY);
+      };
+      const timeText = (ts) => new Date(ts).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }).replace('.', ':');
+      const fmtDate = (ts) => new Date(ts).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
+      const dayName = (ts) => new Date(ts).toLocaleDateString('id-ID', { weekday: 'long' });
+      const getDayKey = (ts) => { const d = new Date(ts); d.setHours(0, 0, 0, 0); return d.getTime(); };
+      const plusDays = (ts, n) => { const d = new Date(ts); d.setDate(d.getDate() + n); return d.getTime(); };
+      const asc = (a, b) => a.timestamp - b.timestamp;
+      const payLabel = (t) => (t.paymentMethod === 'qris' ? 'QRIS' : 'Tunai');
+      const hasRecipe = (p) => !!p && (p.recipe || []).length > 0;
+      const findProduct = (it) => products.find(p => p.name === it.name && p.price === it.price) || products.find(p => p.name === it.name);
+
+      const totalRevenue = sum(transactions, t => t.total);
+      const totalExpense = sum(expenseEntries, e => e.total);
+      const totalMargin = totalRevenue - totalExpense;
+      const totalItemsSold = sum(transactions, t => sum(t.items, i => i.qty));
+
+      // ---- sheet Harian / Mingguan / Bulanan ----
+      const buildPeriodRows = (getKey, labelFn, withGrowth) => {
+        const map = {};
+        const slot = (k) => (map[k] = map[k] || { trx: 0, items: 0, rev: 0, exp: 0 });
+        transactions.forEach(t => { const m = slot(getKey(t.timestamp)); m.trx += 1; m.items += sum(t.items, i => i.qty); m.rev += t.total; });
+        expenseEntries.forEach(e => { slot(getKey(e.timestamp)).exp += e.total; });
+        const keys = Object.keys(map).map(Number).sort((a, b) => a - b);
+        const rows = keys.map((k, idx) => {
+          const m = map[k];
+          const row = {
+            ...labelFn(k),
+            'Jumlah Transaksi': m.trx,
+            'Item Terjual': m.items,
+            'Pendapatan (Rp)': m.rev,
+            'Pengeluaran (Rp)': m.exp,
+            'Margin (Rp)': m.rev - m.exp,
+            'Margin %': share(m.rev - m.exp, m.rev),
+          };
+          if (withGrowth) {
+            const prev = idx > 0 ? map[keys[idx - 1]].rev : 0;
+            row['Pertumbuhan Pendapatan %'] = prev > 0 ? (m.rev - prev) / prev : '';
+          }
+          return row;
+        });
+        if (rows.length) {
+          const T = { trx: 0, items: 0, rev: 0, exp: 0 };
+          keys.forEach(k => { T.trx += map[k].trx; T.items += map[k].items; T.rev += map[k].rev; T.exp += map[k].exp; });
+          const totalRow = {};
+          Object.keys(rows[0]).forEach(h => { totalRow[h] = ''; });
+          totalRow[Object.keys(rows[0])[0]] = 'TOTAL';
+          totalRow['Jumlah Transaksi'] = T.trx;
+          totalRow['Item Terjual'] = T.items;
+          totalRow['Pendapatan (Rp)'] = T.rev;
+          totalRow['Pengeluaran (Rp)'] = T.exp;
+          totalRow['Margin (Rp)'] = T.rev - T.exp;
+          totalRow['Margin %'] = share(T.rev - T.exp, T.rev);
+          rows.push(totalRow);
+        }
+        return rows;
+      };
+      const dailyRows = buildPeriodRows(getDayKey, k => ({ 'Tanggal': excelDate(k), 'Hari': dayName(k) }), false);
+      const weeklyRows = buildPeriodRows(getWeekKey, k => ({ 'Periode (Senin-Minggu)': `${fmtDate(k)} – ${fmtDate(plusDays(k, 6))}` }), true);
+      const monthlyRows = buildPeriodRows(getMonthKey, k => ({ 'Bulan': new Date(k).toLocaleDateString('id-ID', { month: 'long', year: 'numeric' }) }), true);
+
+      // ---- sheet Per Menu ----
+      const menuMap = {};
+      const menuSlot = (name) => (menuMap[name] = menuMap[name] || { qty: 0, rev: 0, hpp: 0, revWithRecipe: 0 });
+      transactions.forEach(t => {
+        // diskon dibagi proporsional ke tiap item, supaya total per menu = total pendapatan
+        const ratio = t.subtotal > 0 ? t.total / t.subtotal : 1;
+        t.items.forEach(it => {
+          const m = menuSlot(it.name);
+          const lineNet = it.price * it.qty * ratio;
+          m.qty += it.qty;
+          m.rev += lineNet;
+          const p = findProduct(it);
+          if (hasRecipe(p)) { m.hpp += computeHPP(p.recipe) * it.qty; m.revWithRecipe += lineNet; }
+        });
+      });
+      products.forEach(p => menuSlot(p.name));
+      const menuRows = Object.keys(menuMap).map(name => {
+        const m = menuMap[name];
+        const p = products.find(x => x.name === name);
+        const rec = hasRecipe(p);
+        const hpp = rec ? computeHPP(p.recipe) : '';
+        return {
+          'Menu': name,
+          'Kategori': p ? p.category : '',
+          'Harga Jual (Rp)': p ? p.price : '',
+          'HPP/porsi (Rp)': hpp,
+          'Untung/porsi (Rp)': rec ? p.price - hpp : '',
+          'Margin per Porsi %': rec && p.price > 0 ? (p.price - hpp) / p.price : '',
+          'Terjual (pcs)': m.qty,
+          'Pendapatan (Rp)': m.rev,
+          'Kontribusi Pendapatan %': share(m.rev, totalRevenue),
+          'Total HPP (Rp)': m.revWithRecipe > 0 ? m.hpp : '',
+          'Laba Kotor Est. (Rp)': m.revWithRecipe > 0 ? m.revWithRecipe - m.hpp : '',
+          'Stok Saat Ini': p ? p.stock : '',
+        };
+      }).sort((a, b) => (b['Terjual (pcs)'] - a['Terjual (pcs)']) || (b['Pendapatan (Rp)'] - a['Pendapatan (Rp)']));
+      if (menuRows.length) {
+        const totalRow = {};
+        Object.keys(menuRows[0]).forEach(h => { totalRow[h] = ''; });
+        totalRow['Menu'] = 'TOTAL';
+        totalRow['Terjual (pcs)'] = sum(menuRows, r => r['Terjual (pcs)']);
+        totalRow['Pendapatan (Rp)'] = sum(menuRows, r => r['Pendapatan (Rp)']);
+        totalRow['Kontribusi Pendapatan %'] = share(totalRow['Pendapatan (Rp)'], totalRevenue);
+        totalRow['Total HPP (Rp)'] = sum(menuRows, r => (typeof r['Total HPP (Rp)'] === 'number' ? r['Total HPP (Rp)'] : 0));
+        totalRow['Laba Kotor Est. (Rp)'] = sum(menuRows, r => (typeof r['Laba Kotor Est. (Rp)'] === 'number' ? r['Laba Kotor Est. (Rp)'] : 0));
+        menuRows.push(totalRow);
+      }
+      const menuDataRows = menuRows.filter(r => r['Menu'] !== 'TOTAL');
+
+      // ---- sheet Per Jam ----
+      const hourMap = {};
+      transactions.forEach(t => {
+        const h = new Date(t.timestamp).getHours();
+        const m = (hourMap[h] = hourMap[h] || { trx: 0, items: 0, rev: 0 });
+        m.trx += 1; m.items += sum(t.items, i => i.qty); m.rev += t.total;
+      });
+      const hourRows = Object.keys(hourMap).map(Number).sort((a, b) => a - b).map(h => ({
+        'Jam': `${String(h).padStart(2, '0')}.00–${String((h + 1) % 24).padStart(2, '0')}.00`,
+        'Jumlah Transaksi': hourMap[h].trx,
+        'Item Terjual': hourMap[h].items,
+        'Pendapatan (Rp)': hourMap[h].rev,
+        'Rata-rata/Transaksi (Rp)': hourMap[h].rev / hourMap[h].trx,
+        'Porsi Transaksi %': hourMap[h].trx / transactions.length,
+      }));
+
+      // ---- sheet Transaksi & Detail Item ----
+      const sortedTrx = [...transactions].sort(asc);
+      const trxRows = sortedTrx.map(t => ({
+        'Tanggal': excelDate(t.timestamp),
+        'Jam': timeText(t.timestamp),
+        'No. Transaksi': t.id,
+        'Metode Bayar': payLabel(t),
+        'Item': t.items.map(i => `${i.name} x${i.qty}`).join(', '),
+        'Jumlah Item': sum(t.items, i => i.qty),
+        'Subtotal (Rp)': t.subtotal != null ? t.subtotal : t.total,
+        'Diskon %': (t.discountPercent || 0) / 100,
+        'Diskon (Rp)': t.discountAmount || 0,
+        'Total (Rp)': t.total,
+        'Tunai Diterima (Rp)': t.paymentMethod === 'qris' ? '' : t.cash,
+        'Kembalian (Rp)': t.paymentMethod === 'qris' ? '' : t.change,
+      }));
+      const lineRows = [];
+      sortedTrx.forEach(t => {
+        const ratio = t.subtotal > 0 ? t.total / t.subtotal : 1;
+        t.items.forEach(i => {
+          const p = findProduct(i);
+          lineRows.push({
+            'Tanggal': excelDate(t.timestamp),
+            'Jam': timeText(t.timestamp),
+            'No. Transaksi': t.id,
+            'Menu': i.name,
+            'Kategori': p ? p.category : '',
+            'Jumlah': i.qty,
+            'Harga Satuan (Rp)': i.price,
+            'Subtotal (Rp)': i.price * i.qty,
+            'Setelah Diskon (Rp)': i.price * i.qty * ratio,
+            'Metode Bayar': payLabel(t),
+          });
+        });
+      });
+
+      // ---- sheet Pengeluaran & Per Bahan ----
+      const expRows = [...expenseEntries].sort(asc).map(e => ({
+        'Tanggal': excelDate(e.timestamp),
+        'Jam': timeText(e.timestamp),
+        'Bahan': e.itemName,
+        'Satuan': e.unit || '',
+        'Jumlah': e.qty,
+        'Harga Satuan (Rp)': e.unitPrice,
+        'Total (Rp)': e.total,
+      }));
+      const bahanMap = {};
+      expenseEntries.forEach(e => {
+        const m = (bahanMap[e.itemName] = bahanMap[e.itemName] || { unit: e.unit || '', qty: 0, total: 0, n: 0 });
+        m.qty += e.qty; m.total += e.total; m.n += 1;
+      });
+      const bahanRows = Object.keys(bahanMap).map(name => ({
+        'Bahan': name,
+        'Satuan': bahanMap[name].unit,
+        'Total Jumlah': bahanMap[name].qty,
+        'Jumlah Pembelian (kali)': bahanMap[name].n,
+        'Total Biaya (Rp)': bahanMap[name].total,
+        'Rata-rata Harga Satuan (Rp)': bahanMap[name].qty > 0 ? bahanMap[name].total / bahanMap[name].qty : '',
+        'Porsi Pengeluaran %': share(bahanMap[name].total, totalExpense),
+      })).sort((a, b) => b['Total Biaya (Rp)'] - a['Total Biaya (Rp)']);
+      if (bahanRows.length) {
+        bahanRows.push({
+          'Bahan': 'TOTAL', 'Satuan': '', 'Total Jumlah': '', 'Jumlah Pembelian (kali)': sum(bahanRows, r => r['Jumlah Pembelian (kali)']),
+          'Total Biaya (Rp)': totalExpense, 'Rata-rata Harga Satuan (Rp)': '', 'Porsi Pengeluaran %': share(totalExpense, totalExpense),
+        });
+      }
+
+      // ---- sheet Ringkasan (dengan insight) ----
+      const allTs = [...transactions.map(t => t.timestamp), ...expenseEntries.map(e => e.timestamp)];
+      let firstTs = Infinity;
+      let lastTs = -Infinity;
+      allTs.forEach(ts => { if (ts < firstTs) firstTs = ts; if (ts > lastTs) lastTs = ts; });
+      const S = [];
+      const sec = (title) => { if (S.length) S.push({ l: '' }); S.push({ l: title }); };
+      const add = (l, v, f, n) => S.push({ l, v, f, n });
+      S.push({ l: `LAPORAN BISNIS — ${storeSettings.name || 'Toko Saya'}` });
+      add('Dibuat pada', new Date().toLocaleString('id-ID'));
+      add('Rentang data', `${fmtDate(firstTs)} – ${fmtDate(lastTs)}`);
+
+      sec('1. PENDAPATAN & MARGIN (SEMUA WAKTU)');
+      add('Total Pendapatan (Rp)', totalRevenue, '#,##0');
+      add('Total Pengeluaran Tercatat (Rp)', totalExpense, '#,##0', 'Dari tab Modal');
+      add('Margin = Pendapatan − Pengeluaran (Rp)', totalMargin, '#,##0');
+      add('Margin %', share(totalMargin, totalRevenue), '0.0%', 'Makin lengkap pencatatan pengeluaran, makin akurat angka ini');
+      add('Catatan membaca margin', 'Belanja dicatat saat dibeli, bukan saat dipakai', null, 'Belanja besar (mis. stok sebulan) bikin margin periode itu tampak kecil. Lihat tren Bulanan & laba kotor per menu. Minggu/bulan berjalan belum penuh, jadi pertumbuhannya belum final.');
+
+      sec('2. PERIODE BERJALAN');
+      [['Hari Ini', todaysRevenue, todaysExpenses], ['Minggu Ini', weekRevenue, weekExpenses], ['Bulan Ini', monthRevenue, monthExpenses]].forEach(([label, rev, exp]) => {
+        add(`Pendapatan ${label} (Rp)`, rev, '#,##0');
+        add(`Pengeluaran ${label} (Rp)`, exp, '#,##0');
+        add(`Margin ${label} (Rp)`, rev - exp, '#,##0');
+      });
+
+      sec('3. PENJUALAN');
+      const cashRev = sum(transactions.filter(t => t.paymentMethod !== 'qris'), t => t.total);
+      const qrisRev = totalRevenue - cashRev;
+      add('Jumlah Transaksi', transactions.length, '#,##0');
+      add('Total Item Terjual (pcs)', totalItemsSold, '#,##0');
+      add('Rata-rata Nilai per Transaksi (Rp)', transactions.length ? totalRevenue / transactions.length : 0, '#,##0');
+      add('Rata-rata Item per Transaksi', transactions.length ? totalItemsSold / transactions.length : 0, '0.0');
+      add('Total Diskon Diberikan (Rp)', sum(transactions, t => t.discountAmount || 0), '#,##0');
+      add('Pendapatan Tunai (Rp)', cashRev, '#,##0', pctText(cashRev, totalRevenue));
+      add('Pendapatan QRIS (Rp)', qrisRev, '#,##0', pctText(qrisRev, totalRevenue));
+
+      sec('4. HPP & LABA KOTOR (ESTIMASI DARI RESEP)');
+      const menuAgg = Object.keys(menuMap).map(k => menuMap[k]);
+      const revWithRecipe = sum(menuAgg, m => m.revWithRecipe);
+      const hppTotal = sum(menuAgg, m => m.hpp);
+      add('Menu yang sudah punya resep', `${products.filter(p => hasRecipe(p)).length} dari ${products.length} menu`);
+      add('Pendapatan dari menu beresep (Rp)', revWithRecipe, '#,##0', pctText(revWithRecipe, totalRevenue));
+      add('Total HPP menu terjual (Rp)', hppTotal, '#,##0', 'Resep × harga bahan terakhir (estimasi)');
+      add('Laba Kotor Estimasi (Rp)', revWithRecipe - hppTotal, '#,##0');
+      add('Margin Laba Kotor %', share(revWithRecipe - hppTotal, revWithRecipe), '0.0%');
+
+      sec('5. INSIGHT & SARAN');
+      const sold = menuDataRows.filter(r => r['Terjual (pcs)'] > 0);
+      if (sold.length) {
+        add('Menu terlaris', `${sold[0]['Menu']} (${sold[0]['Terjual (pcs)']} pcs)`);
+        const byRev = [...sold].sort((a, b) => b['Pendapatan (Rp)'] - a['Pendapatan (Rp)']);
+        add('Penyumbang pendapatan terbesar', `${byRev[0]['Menu']} — ${fmtRp(byRev[0]['Pendapatan (Rp)'])}`, null, pctText(byRev[0]['Pendapatan (Rp)'], totalRevenue));
+        add('Kontribusi 3 menu teratas', share(sum(byRev.slice(0, 3), r => r['Pendapatan (Rp)']), totalRevenue), '0.0%', 'Kalau terlalu tinggi, dorong menu lain lewat promo/bundling');
+      }
+      const unsold = menuDataRows.filter(r => r['Terjual (pcs)'] === 0).map(r => r['Menu']);
+      if (unsold.length) add('Menu belum laku sama sekali', unsold.slice(0, 8).join(', '), null, 'Pertimbangkan promo, ganti posisi, atau hapus dari menu');
+      if (hourRows.length) {
+        const bh = [...hourRows].sort((a, b) => b['Jumlah Transaksi'] - a['Jumlah Transaksi'])[0];
+        add('Jam tersibuk', bh['Jam'], null, `${bh['Jumlah Transaksi']} transaksi — pastikan stok & tenaga siap di jam ini`);
+      }
+      const dayRev = {};
+      transactions.forEach(t => { const k = getDayKey(t.timestamp); dayRev[k] = (dayRev[k] || 0) + t.total; });
+      const dayKeys = Object.keys(dayRev).map(Number);
+      if (dayKeys.length) {
+        const bestDay = dayKeys.sort((a, b) => dayRev[b] - dayRev[a])[0];
+        add('Tanggal dengan pendapatan tertinggi', `${dayName(bestDay)}, ${fmtDate(bestDay)}`, null, fmtRp(dayRev[bestDay]));
+        const wdSum = [0, 0, 0, 0, 0, 0, 0];
+        const wdCnt = [0, 0, 0, 0, 0, 0, 0];
+        dayKeys.forEach(k => { const wd = new Date(k).getDay(); wdSum[wd] += dayRev[k]; wdCnt[wd] += 1; });
+        let bestWd = -1; let bestAvg = -1;
+        for (let wd = 0; wd < 7; wd++) { if (wdCnt[wd] > 0 && wdSum[wd] / wdCnt[wd] > bestAvg) { bestAvg = wdSum[wd] / wdCnt[wd]; bestWd = wd; } }
+        if (bestWd >= 0) add('Hari paling ramai (rata-rata)', ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'][bestWd], null, `Rata-rata ${fmtRp(bestAvg)} per hari`);
+      }
+      if (bahanRows.length > 1) {
+        add('Pengeluaran terbesar', `${bahanRows[0]['Bahan']} — ${fmtRp(bahanRows[0]['Total Biaya (Rp)'])}`, null, pctText(bahanRows[0]['Total Biaya (Rp)'], totalExpense) + ' — cek supplier/harga alternatif');
+      }
+      const withMargin = menuDataRows.filter(r => typeof r['Margin per Porsi %'] === 'number');
+      if (withMargin.length) {
+        const hi = [...withMargin].sort((a, b) => b['Margin per Porsi %'] - a['Margin per Porsi %'])[0];
+        const lo = [...withMargin].sort((a, b) => a['Margin per Porsi %'] - b['Margin per Porsi %'])[0];
+        add('Menu margin per porsi tertinggi', hi['Menu'], null, `${Math.round(hi['Margin per Porsi %'] * 100)}% — layak didorong/dipromosikan`);
+        add('Menu margin per porsi terendah', lo['Menu'], null, `${Math.round(lo['Margin per Porsi %'] * 100)}% — tinjau harga jual atau takaran`);
+        const losing = withMargin.filter(r => r['Untung/porsi (Rp)'] < 0).map(r => r['Menu']);
+        if (losing.length) add('PERHATIAN: menu rugi per porsi', losing.join(', '), null, 'HPP lebih besar dari harga jual — naikkan harga atau cek resep');
+      }
+      const noRecipe = products.filter(p => !hasRecipe(p)).length;
+      if (noRecipe > 0) add('Menu belum punya resep', `${noRecipe} menu`, null, 'Isi resep di tab Produk supaya HPP & laba per menu terhitung');
+      const lowStock = products.filter(p => p.stock < 5).map(p => `${p.name} (${p.stock})`);
+      if (lowStock.length) add('Stok menipis (< 5)', lowStock.slice(0, 8).join(', '), null, 'Segera restock');
+      if (totalRevenue > 0 && totalMargin / totalRevenue < 0.3) add('PERHATIAN: margin di bawah 30%', `${Math.round((totalMargin / totalRevenue) * 100)}%`, null, 'Tinjau harga jual atau biaya bahan terbesar');
+
+      // ---- rakit workbook ----
+      const finishSheet = (ws, filter) => {
+        if (!ws['!ref']) return ws;
+        const range = XLSX.utils.decode_range(ws['!ref']);
+        const headers = [];
+        for (let c = range.s.c; c <= range.e.c; c++) {
+          const cell = ws[XLSX.utils.encode_cell({ r: range.s.r, c })];
+          headers.push(cell ? String(cell.v) : '');
+        }
+        const widths = headers.map(h => h.length + 2);
+        for (let r = range.s.r + 1; r <= range.e.r; r++) {
+          for (let c = range.s.c; c <= range.e.c; c++) {
+            const cell = ws[XLSX.utils.encode_cell({ r, c })];
+            if (!cell) continue;
+            const idx = c - range.s.c;
+            const h = headers[idx];
+            if (cell.t === 'n') {
+              if (h.indexOf('(Rp)') !== -1) cell.z = '#,##0';
+              else if (h.indexOf('%') !== -1) cell.z = '0.0%';
+              else if (h === 'Tanggal') cell.z = 'dd/mm/yyyy';
+              widths[idx] = Math.max(widths[idx], 14);
+            } else {
+              widths[idx] = Math.max(widths[idx], String(cell.v).length + 2);
+            }
+          }
+        }
+        ws['!cols'] = widths.map(w => ({ wch: Math.min(Math.max(w, 10), 60) }));
+        if (filter) ws['!autofilter'] = { ref: ws['!ref'] };
+        return ws;
+      };
+
+      const wb = XLSX.utils.book_new();
+      const wsSummary = XLSX.utils.aoa_to_sheet(S.map(r => [r.l, r.v === undefined ? '' : r.v, r.n || '']));
+      S.forEach((r, i) => {
+        if (typeof r.v === 'number' && r.f) {
+          const cell = wsSummary[XLSX.utils.encode_cell({ r: i, c: 1 })];
+          if (cell) cell.z = r.f;
+        }
+      });
+      wsSummary['!cols'] = [{ wch: 46 }, { wch: 36 }, { wch: 72 }];
+      XLSX.utils.book_append_sheet(wb, wsSummary, 'Ringkasan');
+      const addSheet = (name, rows, filter) => {
+        if (!rows.length) return;
+        XLSX.utils.book_append_sheet(wb, finishSheet(XLSX.utils.json_to_sheet(rows), filter), name);
+      };
+      addSheet('Harian', dailyRows, false);
+      addSheet('Mingguan', weeklyRows, false);
+      addSheet('Bulanan', monthlyRows, false);
+      addSheet('Per Menu', menuRows, false);
+      addSheet('Per Jam', hourRows, false);
+      addSheet('Transaksi', trxRows, true);
+      addSheet('Detail Item', lineRows, true);
+      addSheet('Pengeluaran', expRows, true);
+      addSheet('Per Bahan', bahanRows, false);
+
+      const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const slug = (storeSettings.name || 'kasir').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'kasir';
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `laporan-${slug}-${new Date().toLocaleDateString('sv-SE')}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      window.alert('Gagal membuat file Excel: ' + (err && err.message ? err.message : 'tidak diketahui'));
+    }
   };
 
   const importAllData = (e) => {
@@ -1383,6 +1757,10 @@ function KasirApp() {
 
           {activeTab === 'riwayat' && (
             <div>
+              <div className="ka-produk-head" style={{ marginBottom: 14 }}>
+                <h2 style={{ fontSize: 16 }}>Ringkasan</h2>
+                <button className="ka-btn secondary" onClick={exportExcelReport}>📊 Export Excel</button>
+              </div>
               <div className="ka-summary-row">
                 <div className="ka-summary-card">
                   <div className="label"><Ico size={13}>📈</Ico> Transaksi Hari Ini</div>
@@ -1873,10 +2251,15 @@ function KasirApp() {
               <button className="ka-btn primary" onClick={submitSettings}>Simpan</button>
             </div>
             <div className="ka-backup-section">
-              <label>Cadangkan Data</label>
-              <p>Simpan semua data (produk, transaksi, pengeluaran) ke file, atau pulihkan dari file backup sebelumnya.</p>
+              <label>Laporan Excel</label>
+              <p>Unduh laporan bisnis lengkap (.xlsx): ringkasan margin & insight, harian/mingguan/bulanan, per menu, jam ramai, transaksi, pengeluaran.</p>
+              <div className="ka-modal-actions" style={{ marginTop: 0 }}>
+                <button className="ka-btn primary" onClick={exportExcelReport}>📊 Export Laporan Excel</button>
+              </div>
+              <label style={{ marginTop: 18 }}>Backup Data (untuk memulihkan)</label>
+              <p>File JSON ini bukan buat dibaca di Excel. Fungsinya cuma buat memulihkan semua data kalau HP ganti atau aplikasi terhapus.</p>
               <div className="ka-modal-actions">
-                <button className="ka-btn secondary" onClick={exportAllData}><Ico size={14}>📤</Ico> Export Data</button>
+                <button className="ka-btn secondary" onClick={exportAllData}><Ico size={14}>📤</Ico> Backup JSON</button>
                 <label className="ka-btn secondary" style={{ cursor: 'pointer', textAlign: 'center' }}>
                   <Ico size={14}>➕</Ico> Import Data
                   <input type="file" accept="application/json" onChange={importAllData} style={{ display: 'none' }} />
