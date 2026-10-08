@@ -1,4 +1,4 @@
-const CACHE_NAME = 'kasir-cache-v1';
+const CACHE_NAME = 'kasir-cache-v4';
 const APP_SHELL = [
   './',
   './index.html',
@@ -6,12 +6,16 @@ const APP_SHELL = [
   './icon.svg',
   'https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js'
+  'https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'
 ];
 
+// tiap file di-cache sendiri-sendiri: kalau satu gagal, yang lain tetap tersimpan
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).catch(() => {})
+    caches.open(CACHE_NAME).then((cache) =>
+      Promise.all(APP_SHELL.map((url) => cache.add(url).catch(() => {})))
+    )
   );
   self.skipWaiting();
 });
@@ -25,21 +29,32 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// cache-first, falling back to network, and updating the cache in the background
+// halaman utama: internet dulu (supaya selalu versi terbaru), cache kalau offline / sinyal lemot
+// file lain (library CDN, ikon): cache dulu
 self.addEventListener('fetch', (event) => {
-  if (event.request.method !== 'GET') return;
+  const req = event.request;
+  if (req.method !== 'GET') return;
+  const url = new URL(req.url);
+  const isPage = req.mode === 'navigate' || (url.origin === self.location.origin && (url.pathname.endsWith('/') || url.pathname.endsWith('.html')));
+  const store = (response) => {
+    if (response && response.ok) {
+      const copy = response.clone();
+      caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
+    }
+    return response;
+  };
+  if (isPage) {
+    event.respondWith(
+      Promise.race([
+        fetch(req, { cache: 'no-cache' }),
+        new Promise((_, reject) => setTimeout(reject, 4000)),
+      ])
+        .then(store)
+        .catch(() => caches.match(req).then((cached) => cached || caches.match('./index.html')))
+    );
+    return;
+  }
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      const networkFetch = fetch(event.request)
-        .then((response) => {
-          if (response && response.ok) {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-          }
-          return response;
-        })
-        .catch(() => cached);
-      return cached || networkFetch;
-    })
+    caches.match(req).then((cached) => cached || fetch(req).then(store))
   );
 });
