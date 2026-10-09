@@ -265,6 +265,14 @@ const STYLE = `
 /* --- Riwayat tab --- */
 .ka-summary-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 22px; }
 .ka-summary-row.four { grid-template-columns: repeat(4, 1fr); }
+.ka-recipe-item { margin-bottom: 10px; }
+.ka-recipe-item .ka-recipe-row { margin-bottom: 3px; }
+.ka-recipe-item .ka-recipe-row .unit { min-width: 40px; }
+.ka-recipe-cost { font-size: calc(11px * var(--fs, 1)); color: var(--ink-soft); line-height: 1.4; }
+.ka-recipe-cost b { color: var(--rust); font-family: 'IBM Plex Mono', monospace; }
+.ka-presets { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.ka-unit-preview { font-size: calc(12px * var(--fs, 1)); background: var(--accent-light); color: var(--accent-dark); border-radius: 10px; padding: 9px 12px; margin-bottom: 14px; line-height: 1.5; }
+.ka-unit-preview b { font-family: 'IBM Plex Mono', monospace; }
 .ka-font-options { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 4px; }
 .ka-font-option { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px; min-height: 64px; padding: 8px 4px; border: 1px solid var(--border); border-radius: 10px; background: #fff; cursor: pointer; color: var(--ink); font-family: 'IBM Plex Sans', sans-serif; }
 .ka-font-option small { font-size: 11px; color: var(--ink-soft); }
@@ -383,6 +391,21 @@ function Ico({ size = 16, children }) {
 }
 
 const formatRupiah = (n) => 'Rp' + Math.round(n || 0).toLocaleString('id-ID');
+const formatRupiahDec = (n) => 'Rp' + (n || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
+const formatNumberId = (n) => (n || 0).toLocaleString('id-ID', { maximumFractionDigits: 4 });
+
+// Bahan punya satuan beli (mis. liter) dan "isi per satuan" dalam satuan terkecil (mis. 1000 ml) untuk resep.
+// Bahan lama yang belum diisi dianggap isi 1 satuan, jadi hitungannya sama seperti sebelumnya.
+const itemBaseQty = (it) => (it && it.baseQty > 0 ? it.baseQty : 1);
+const itemBaseUnit = (it) => (it && (it.baseUnit || it.unit)) || '';
+const itemCostPerBase = (it) => (it ? (it.price || 0) / itemBaseQty(it) : 0);
+const EXPENSE_PRESETS = [
+  { label: '1 kg = 1.000 gram', unit: 'kg', baseQty: 1000, baseUnit: 'gram' },
+  { label: '1 liter = 1.000 ml', unit: 'liter', baseQty: 1000, baseUnit: 'ml' },
+  { label: '1 pcs = 1 pcs', unit: 'pcs', baseQty: 1, baseUnit: 'pcs' },
+];
+const UNIT_SUGGEST = ['kg', 'liter', 'kaleng', 'pcs', 'pack', 'tabung', 'botol', 'dus', 'sak', 'bulan'];
+const BASE_SUGGEST = ['gram', 'ml', 'pcs', 'porsi', 'shot', 'sdm', 'sdt'];
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
 const FONT_SCALES = {
@@ -449,15 +472,15 @@ const SEED_PRODUCTS = [
 ];
 
 const SEED_EXPENSE_ITEMS = [
-  { id: uid(), name: 'Bubuk Coklat 1KG', unit: 'kg', price: 0 },
-  { id: uid(), name: 'Susu Kental Manis (kaleng)', unit: 'kaleng', price: 0 },
-  { id: uid(), name: 'Susu UHT', unit: 'liter', price: 0 },
-  { id: uid(), name: 'Gelas 14 oz', unit: 'pcs', price: 0 },
-  { id: uid(), name: 'Gelas 16 oz', unit: 'pcs', price: 0 },
-  { id: uid(), name: 'Gas', unit: 'tabung', price: 0 },
-  { id: uid(), name: 'Es Batu', unit: 'kg', price: 0 },
-  { id: uid(), name: 'Listrik', unit: 'bulan', price: 0 },
-  { id: uid(), name: 'Plastik', unit: 'pack', price: 0 },
+  { id: uid(), name: 'Bubuk Coklat 1KG', unit: 'kg', price: 0, baseQty: 1000, baseUnit: 'gram' },
+  { id: uid(), name: 'Susu Kental Manis (kaleng)', unit: 'kaleng', price: 0, baseQty: 1, baseUnit: 'kaleng' },
+  { id: uid(), name: 'Susu UHT', unit: 'liter', price: 0, baseQty: 1000, baseUnit: 'ml' },
+  { id: uid(), name: 'Gelas 14 oz', unit: 'pcs', price: 0, baseQty: 1, baseUnit: 'pcs' },
+  { id: uid(), name: 'Gelas 16 oz', unit: 'pcs', price: 0, baseQty: 1, baseUnit: 'pcs' },
+  { id: uid(), name: 'Gas', unit: 'tabung', price: 0, baseQty: 1, baseUnit: 'tabung' },
+  { id: uid(), name: 'Es Batu', unit: 'kg', price: 0, baseQty: 1000, baseUnit: 'gram' },
+  { id: uid(), name: 'Listrik', unit: 'bulan', price: 0, baseQty: 1, baseUnit: 'bulan' },
+  { id: uid(), name: 'Plastik', unit: 'pack', price: 0, baseQty: 1, baseUnit: 'pack' },
 ];
 
 function KasirApp() {
@@ -497,7 +520,7 @@ function KasirApp() {
   const [expenseItems, setExpenseItems] = useState([]);
   const [expenseEntries, setExpenseEntries] = useState([]);
   const [expenseItemModal, setExpenseItemModal] = useState(null); // null | 'new' | item object
-  const [eiForm, setEiForm] = useState({ name: '', unit: '', price: '' });
+  const [eiForm, setEiForm] = useState({ name: '', unit: '', price: '', baseQty: '1', baseUnit: '' });
   const [showLogExpense, setShowLogExpense] = useState(false);
   const [logForm, setLogForm] = useState({ itemId: '', qty: '1', unitPrice: '' });
   const [editingExpenseEntryId, setEditingExpenseEntryId] = useState(null);
@@ -609,16 +632,45 @@ function KasirApp() {
     } catch (e) { setSaveError(true); }
   };
 
-  const openNewExpenseItem = () => { setEiForm({ name: '', unit: '', price: '' }); setExpenseItemModal('new'); };
-  const openEditExpenseItem = (it) => { setEiForm({ name: it.name, unit: it.unit || '', price: String(it.price) }); setExpenseItemModal(it); };
+  const openNewExpenseItem = () => { setEiForm({ name: '', unit: '', price: '', baseQty: '1', baseUnit: '' }); setExpenseItemModal('new'); };
+  const openEditExpenseItem = (it) => {
+    setEiForm({ name: it.name, unit: it.unit || '', price: String(it.price), baseQty: String(itemBaseQty(it)), baseUnit: itemBaseUnit(it) });
+    setExpenseItemModal(it);
+  };
 
   const submitExpenseItem = async () => {
     if (!eiForm.name.trim()) return;
-    const payload = { name: eiForm.name.trim(), unit: eiForm.unit.trim(), price: Math.max(0, parseFloat(eiForm.price) || 0) };
+    const unit = eiForm.unit.trim();
+    const baseQty = parseFloat(eiForm.baseQty) > 0 ? parseFloat(eiForm.baseQty) : 1;
+    const baseUnit = eiForm.baseUnit.trim() || unit;
+    const payload = { name: eiForm.name.trim(), unit, price: Math.max(0, parseFloat(eiForm.price) || 0), baseQty, baseUnit };
     if (expenseItemModal === 'new') {
       await saveExpenseItems([...expenseItems, { id: uid(), ...payload }]);
     } else {
-      await saveExpenseItems(expenseItems.map(it => it.id === expenseItemModal.id ? { ...it, ...payload } : it));
+      const old = expenseItemModal;
+      await saveExpenseItems(expenseItems.map(it => it.id === old.id ? { ...it, ...payload } : it));
+      // kalau "isi per satuan" berubah, jumlah di resep ikut dikonversi supaya HPP tetap sama
+      const oldBaseQty = itemBaseQty(old);
+      if (baseQty !== oldBaseQty) {
+        const ratio = baseQty / oldBaseQty;
+        const changes = [];
+        const nextProducts = products.map(p => {
+          if (!(p.recipe || []).some(r => r.expenseItemId === old.id)) return p;
+          return {
+            ...p,
+            recipe: p.recipe.map(r => {
+              if (r.expenseItemId !== old.id) return r;
+              const newQty = Math.round(r.qty * ratio * 1e6) / 1e6;
+              changes.push(`${p.name}: ${formatNumberId(r.qty)} → ${formatNumberId(newQty)} ${baseUnit}`);
+              return { ...r, qty: newQty };
+            }),
+          };
+        });
+        if (changes.length > 0) {
+          await saveProducts(nextProducts);
+          window.alert(`Resep yang memakai "${payload.name}" disesuaikan ke satuan baru:\n\n${changes.slice(0, 8).join('\n')}\n\nHPP tetap sama. Cek lagi kalau angkanya terasa keliru.`);
+        }
+      }
     }
     setExpenseItemModal(null);
   };
@@ -1321,7 +1373,7 @@ function KasirApp() {
 
   const computeHPP = (recipe) => (recipe || []).reduce((sum, r) => {
     const item = expenseItems.find(it => it.id === r.expenseItemId);
-    return sum + (item ? item.price * (parseFloat(r.qty) || 0) : 0);
+    return sum + (item ? itemCostPerBase(item) * (parseFloat(r.qty) || 0) : 0);
   }, 0);
 
   const submitProduct = async () => {
@@ -2411,14 +2463,15 @@ function KasirApp() {
               <div className="ka-table-wrap" style={{ marginBottom: 26 }}>
                 <table className="ka-table">
                   <thead>
-                    <tr><th>Nama Bahan</th><th>Satuan</th><th>Harga Terakhir</th><th></th></tr>
+                    <tr><th>Nama Bahan</th><th>Harga Beli</th><th>Isi per Satuan</th><th>Modal per Satuan Terkecil</th><th></th></tr>
                   </thead>
                   <tbody>
                     {expenseItems.map(it => (
                       <tr key={it.id}>
                         <td style={{ fontWeight: 600 }}>{it.name}</td>
-                        <td style={{ color: 'var(--ink-soft)' }}>{it.unit || '-'}</td>
-                        <td className="price-cell">{formatRupiah(it.price)}</td>
+                        <td className="price-cell">{formatRupiah(it.price)}<div className="ka-cell-sub">per {it.unit || 'satuan'}</div></td>
+                        <td className="mono">{formatNumberId(itemBaseQty(it))} {itemBaseUnit(it) || '-'}</td>
+                        <td className="mono" style={{ fontWeight: 600 }}>{formatRupiahDec(itemCostPerBase(it))} / {itemBaseUnit(it) || 'satuan'}</td>
                         <td>
                           <div className="actions">
                             <button className="ka-icon-btn" onClick={() => openEditExpenseItem(it)}><Ico size={14}>✏️</Ico></button>
@@ -2576,14 +2629,20 @@ function KasirApp() {
               <label>Resep per 1 porsi (opsional, buat hitung HPP)</label>
               {(pForm.recipe || []).map((r, idx) => {
                 const item = expenseItems.find(it => it.id === r.expenseItemId);
+                const qtyNum = parseFloat(r.qty) || 0;
                 return (
-                  <div className="ka-recipe-row" key={idx}>
-                    <select value={r.expenseItemId} onChange={e => updateRecipeRow(idx, { expenseItemId: e.target.value })}>
-                      {expenseItems.map(it => <option key={it.id} value={it.id}>{it.name}</option>)}
-                    </select>
-                    <input type="number" step="any" placeholder="jml" value={r.qty} onChange={e => updateRecipeRow(idx, { qty: e.target.value })} />
-                    <span className="unit">{item && item.unit ? item.unit : ''}</span>
-                    <button className="ka-icon-btn del" onClick={() => removeRecipeRow(idx)}><Ico size={13}>🗑️</Ico></button>
+                  <div className="ka-recipe-item" key={idx}>
+                    <div className="ka-recipe-row">
+                      <select value={r.expenseItemId} onChange={e => updateRecipeRow(idx, { expenseItemId: e.target.value })}>
+                        {expenseItems.map(it => <option key={it.id} value={it.id}>{it.name}{itemBaseUnit(it) ? ` (${itemBaseUnit(it)})` : ''}</option>)}
+                      </select>
+                      <input type="number" step="any" placeholder="jml" value={r.qty} onChange={e => updateRecipeRow(idx, { qty: e.target.value })} />
+                      <span className="unit">{item ? itemBaseUnit(item) : ''}</span>
+                      <button className="ka-icon-btn del" onClick={() => removeRecipeRow(idx)}><Ico size={13}>🗑️</Ico></button>
+                    </div>
+                    {item && (
+                      <div className="ka-recipe-cost">{formatRupiahDec(itemCostPerBase(item))} per {itemBaseUnit(item) || 'satuan'} × {formatNumberId(qtyNum)} = <b>{formatRupiahDec(itemCostPerBase(item) * qtyNum)}</b></div>
+                    )}
                   </div>
                 );
               })}
@@ -2617,14 +2676,41 @@ function KasirApp() {
             </div>
             <div className="ka-field-row">
               <div className="ka-field">
-                <label>Satuan</label>
-                <input value={eiForm.unit} onChange={e => setEiForm({ ...eiForm, unit: e.target.value })} placeholder="kg / pcs / kaleng" />
-              </div>
-              <div className="ka-field">
-                <label>Harga (Rp)</label>
+                <label>Harga beli (Rp)</label>
                 <input type="number" value={eiForm.price} onChange={e => setEiForm({ ...eiForm, price: e.target.value })} placeholder="0" />
               </div>
+              <div className="ka-field">
+                <label>Dibeli per</label>
+                <input list="ka-unit-list" value={eiForm.unit} onChange={e => setEiForm({ ...eiForm, unit: e.target.value })} placeholder="liter / kg / kaleng" />
+              </div>
             </div>
+            <div className="ka-field">
+              <label>Isi per 1 {eiForm.unit.trim() || 'satuan'}, dalam satuan terkecil buat resep</label>
+              <div className="ka-field-row">
+                <input type="number" step="any" style={{ flex: 1, minWidth: 0 }} value={eiForm.baseQty} onChange={e => setEiForm({ ...eiForm, baseQty: e.target.value })} placeholder="1000" />
+                <input list="ka-base-unit-list" style={{ flex: 1, minWidth: 0 }} value={eiForm.baseUnit} onChange={e => setEiForm({ ...eiForm, baseUnit: e.target.value })} placeholder="ml / gram / pcs" />
+              </div>
+              <div className="ka-presets">
+                {EXPENSE_PRESETS.map(pr => (
+                  <button key={pr.label} className="ka-chip" onClick={() => setEiForm({ ...eiForm, unit: pr.unit, baseQty: String(pr.baseQty), baseUnit: pr.baseUnit })}>{pr.label}</button>
+                ))}
+              </div>
+            </div>
+            {(() => {
+              const price = parseFloat(eiForm.price) || 0;
+              const bq = parseFloat(eiForm.baseQty) || 0;
+              const unitLbl = eiForm.baseUnit.trim() || eiForm.unit.trim() || 'satuan';
+              if (!(price > 0 && bq > 0)) return null;
+              const cost = price / bq;
+              const ex = bq >= 100 ? Math.round(bq * 0.15) : 1;
+              return (
+                <div className="ka-unit-preview">
+                  Modal <b>{formatRupiahDec(cost)}</b> per {unitLbl}. Contoh: kalau 1 produk pakai <b>{formatNumberId(ex)} {unitLbl}</b> → <b>{formatRupiahDec(cost * ex)}</b>.
+                </div>
+              );
+            })()}
+            <datalist id="ka-unit-list">{UNIT_SUGGEST.map(u => <option key={u} value={u} />)}</datalist>
+            <datalist id="ka-base-unit-list">{BASE_SUGGEST.map(u => <option key={u} value={u} />)}</datalist>
             <div className="ka-modal-actions">
               <button className="ka-btn secondary" onClick={() => setExpenseItemModal(null)}>Batal</button>
               <button className="ka-btn primary" onClick={submitExpenseItem}>Simpan</button>
