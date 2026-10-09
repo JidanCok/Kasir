@@ -273,6 +273,14 @@ const STYLE = `
 .ka-presets { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .ka-unit-preview { font-size: calc(12px * var(--fs, 1)); background: var(--accent-light); color: var(--accent-dark); border-radius: 10px; padding: 9px 12px; margin-bottom: 14px; line-height: 1.5; }
 .ka-unit-preview b { font-family: 'IBM Plex Mono', monospace; }
+.ka-unit-preview div + div { margin-top: 3px; }
+.ka-unit-warn { color: var(--rust); font-weight: 600; }
+.ka-field .ka-inline-row { display: flex; align-items: center; gap: 8px; }
+.ka-field .ka-inline-row input { flex: 1; min-width: 0; }
+.ka-inline-word { font-size: calc(13px * var(--fs, 1)); color: var(--ink-soft); white-space: nowrap; }
+.ka-affix { position: relative; flex: 1; min-width: 0; }
+.ka-affix .pre { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); font-size: calc(13px * var(--fs, 1)); color: var(--ink-soft); pointer-events: none; }
+.ka-field .ka-affix input { padding-left: 34px; }
 .ka-font-options { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 4px; }
 .ka-font-option { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px; min-height: 64px; padding: 8px 4px; border: 1px solid var(--border); border-radius: 10px; background: #fff; cursor: pointer; color: var(--ink); font-family: 'IBM Plex Sans', sans-serif; }
 .ka-font-option small { font-size: 11px; color: var(--ink-soft); }
@@ -399,11 +407,20 @@ const formatNumberId = (n) => (n || 0).toLocaleString('id-ID', { maximumFraction
 const itemBaseQty = (it) => (it && it.baseQty > 0 ? it.baseQty : 1);
 const itemBaseUnit = (it) => (it && (it.baseUnit || it.unit)) || '';
 const itemCostPerBase = (it) => (it ? (it.price || 0) / itemBaseQty(it) : 0);
-const EXPENSE_PRESETS = [
-  { label: '1 kg = 1.000 gram', unit: 'kg', baseQty: 1000, baseUnit: 'gram' },
-  { label: '1 liter = 1.000 ml', unit: 'liter', baseQty: 1000, baseUnit: 'ml' },
-  { label: '1 pcs = 1 pcs', unit: 'pcs', baseQty: 1, baseUnit: 'pcs' },
+const PURCHASE_CHIPS = [
+  { unit: 'kaleng' }, { unit: 'botol' }, { unit: 'pack' }, { unit: 'dus' },
+  { unit: 'kg', baseQty: 1000, baseUnit: 'gram' },
+  { unit: 'liter', baseQty: 1000, baseUnit: 'ml' },
+  { unit: 'pcs', baseQty: 1, baseUnit: 'pcs' },
 ];
+const BASE_CHIPS = ['gram', 'ml', 'pcs'];
+// contoh takaran yang "bulat" untuk penjelasan (mis. 150 ml), bukan angka aneh seperti 55,5
+const niceExampleQty = (bq) => {
+  if (!(bq >= 100)) return 1;
+  const target = bq * 0.15;
+  const nice = [10, 20, 25, 30, 50, 75, 100, 150, 200, 250, 300, 500];
+  return nice.reduce((best, n) => (Math.abs(n - target) < Math.abs(best - target) ? n : best), nice[0]);
+};
 const UNIT_SUGGEST = ['kg', 'liter', 'kaleng', 'pcs', 'pack', 'tabung', 'botol', 'dus', 'sak', 'bulan'];
 const BASE_SUGGEST = ['gram', 'ml', 'pcs', 'porsi', 'shot', 'sdm', 'sdt'];
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -2674,43 +2691,58 @@ function KasirApp() {
               <label>Nama Bahan</label>
               <input value={eiForm.name} onChange={e => setEiForm({ ...eiForm, name: e.target.value })} placeholder="Contoh: Gelas 22 oz" />
             </div>
-            <div className="ka-field-row">
-              <div className="ka-field">
-                <label>Harga beli (Rp)</label>
-                <input type="number" value={eiForm.price} onChange={e => setEiForm({ ...eiForm, price: e.target.value })} placeholder="0" />
+            <div className="ka-field">
+              <label>1. Harga beli</label>
+              <div className="ka-inline-row">
+                <div className="ka-affix">
+                  <span className="pre">Rp</span>
+                  <input type="number" value={eiForm.price} onChange={e => setEiForm({ ...eiForm, price: e.target.value })} placeholder="11600" />
+                </div>
+                <span className="ka-inline-word">per</span>
+                <input list="ka-unit-list" value={eiForm.unit} onChange={e => setEiForm({ ...eiForm, unit: e.target.value })} placeholder="kaleng / kg / liter" />
               </div>
-              <div className="ka-field">
-                <label>Dibeli per</label>
-                <input list="ka-unit-list" value={eiForm.unit} onChange={e => setEiForm({ ...eiForm, unit: e.target.value })} placeholder="liter / kg / kaleng" />
+              <div className="ka-presets">
+                {PURCHASE_CHIPS.map(c => (
+                  <button key={c.unit} className={`ka-chip ${eiForm.unit.trim().toLowerCase() === c.unit ? 'active' : ''}`}
+                    onClick={() => setEiForm(f => ({ ...f, unit: c.unit, ...(c.baseQty ? { baseQty: String(c.baseQty), baseUnit: c.baseUnit } : {}) }))}>{c.unit}</button>
+                ))}
               </div>
             </div>
             <div className="ka-field">
-              <label>Isi per 1 {eiForm.unit.trim() || 'satuan'}, dalam satuan terkecil buat resep</label>
-              <div className="ka-field-row">
-                <input type="number" step="any" style={{ flex: 1, minWidth: 0 }} value={eiForm.baseQty} onChange={e => setEiForm({ ...eiForm, baseQty: e.target.value })} placeholder="1000" />
-                <input list="ka-base-unit-list" style={{ flex: 1, minWidth: 0 }} value={eiForm.baseUnit} onChange={e => setEiForm({ ...eiForm, baseUnit: e.target.value })} placeholder="ml / gram / pcs" />
+              <label>2. Isi 1 {eiForm.unit.trim() || 'kemasan'} berapa? (dalam satuan terkecil buat resep)</label>
+              <div className="ka-inline-row">
+                <span className="ka-inline-word">1 {eiForm.unit.trim() || 'kemasan'} =</span>
+                <input type="number" step="any" value={eiForm.baseQty} onChange={e => setEiForm({ ...eiForm, baseQty: e.target.value })} placeholder="370" />
+                <input list="ka-base-unit-list" value={eiForm.baseUnit} onChange={e => setEiForm({ ...eiForm, baseUnit: e.target.value })} placeholder="gram / ml / pcs" />
               </div>
               <div className="ka-presets">
-                {EXPENSE_PRESETS.map(pr => (
-                  <button key={pr.label} className="ka-chip" onClick={() => setEiForm({ ...eiForm, unit: pr.unit, baseQty: String(pr.baseQty), baseUnit: pr.baseUnit })}>{pr.label}</button>
+                {BASE_CHIPS.map(u => (
+                  <button key={u} className={`ka-chip ${eiForm.baseUnit.trim().toLowerCase() === u ? 'active' : ''}`} onClick={() => setEiForm(f => ({ ...f, baseUnit: u }))}>{u}</button>
                 ))}
               </div>
             </div>
             {(() => {
               const price = parseFloat(eiForm.price) || 0;
               const bq = parseFloat(eiForm.baseQty) || 0;
-              const unitLbl = eiForm.baseUnit.trim() || eiForm.unit.trim() || 'satuan';
+              const unit = eiForm.unit.trim();
+              const baseLbl = eiForm.baseUnit.trim() || unit || 'satuan';
               if (!(price > 0 && bq > 0)) return null;
               const cost = price / bq;
-              const ex = bq >= 100 ? Math.round(bq * 0.15) : 1;
+              const ex = niceExampleQty(bq);
+              const sameUnit = !!unit && !!eiForm.baseUnit.trim() && unit.toLowerCase() === eiForm.baseUnit.trim().toLowerCase() && bq !== 1;
               return (
                 <div className="ka-unit-preview">
-                  Modal <b>{formatRupiahDec(cost)}</b> per {unitLbl}. Contoh: kalau 1 produk pakai <b>{formatNumberId(ex)} {unitLbl}</b> → <b>{formatRupiahDec(cost * ex)}</b>.
+                  <div>{formatRupiah(price)} per {unit || 'kemasan'}, isi {formatNumberId(bq)} {baseLbl}</div>
+                  <div>→ Modal <b>{formatRupiahDec(cost)}</b> per {baseLbl}</div>
+                  <div>Contoh: 1 produk pakai <b>{formatNumberId(ex)} {baseLbl}</b> → <b>{formatRupiahDec(cost * ex)}</b></div>
+                  {sameUnit && (
+                    <div className="ka-unit-warn">⚠️ "Dibeli per" dan satuan terkecil sama-sama {unit}. "Dibeli per" biasanya kemasannya (kaleng, botol, kg, liter), bukan satuan terkecil.</div>
+                  )}
                 </div>
               );
             })()}
             <datalist id="ka-unit-list">{UNIT_SUGGEST.map(u => <option key={u} value={u} />)}</datalist>
-            <datalist id="ka-base-unit-list">{BASE_SUGGEST.map(u => <option key={u} value={u} />)}</datalist>
+<datalist id="ka-base-unit-list">{BASE_SUGGEST.map(u => <option key={u} value={u} />)}</datalist>
             <div className="ka-modal-actions">
               <button className="ka-btn secondary" onClick={() => setExpenseItemModal(null)}>Batal</button>
               <button className="ka-btn primary" onClick={submitExpenseItem}>Simpan</button>
